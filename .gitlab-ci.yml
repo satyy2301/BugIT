@@ -1,0 +1,61 @@
+stages:
+  - lint
+  - build
+  - test
+  - docker
+  - integration
+
+variables:
+  GO_VERSION: "1.22"
+  DRE_SNAPSHOT_KEY: "ci-test-key"
+
+lint:
+  stage: lint
+  image: golang:${GO_VERSION}
+  script:
+    - go vet ./...
+    - |
+      if command -v golangci-lint; then
+        golangci-lint run ./...
+      else
+        echo "golangci-lint not installed, skipping"
+      fi
+
+build:
+  stage: build
+  image: golang:${GO_VERSION}-bookworm
+  before_script:
+    - apt-get update && apt-get install -y clang llvm libbpf-dev linux-headers-amd64
+    - go install github.com/cilium/ebpf/cmd/bpf2go@v0.16.0
+  script:
+    - make bpf build
+  artifacts:
+    paths:
+      - bin/
+
+test:
+  stage: test
+  image: golang:${GO_VERSION}
+  script:
+    - go test ./...
+
+docker:
+  stage: docker
+  image: docker:27
+  services:
+    - docker:27-dind
+  script:
+    - docker build -t bugit/dre-agent:dev -f dre-agent/Dockerfile .
+    - docker build -t bugit/dre-collector:dev -f dre-collector/Dockerfile .
+  rules:
+    - if: $CI_COMMIT_BRANCH
+
+integration:
+  stage: integration
+  image: golang:${GO_VERSION}-bookworm
+  script:
+    - go test -v ./test/integration/...
+    - go test -v ./pkg/drearchive/...
+    - go test -v ./dre-collector/internal/server/...
+  rules:
+    - when: manual

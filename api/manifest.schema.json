@@ -1,0 +1,28 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "DRE Snapshot Manifest",
+  "type": "object",
+  "required": ["id", "cluster", "nodes", "trigger", "captured_at", "event_count", "checksum"],
+  "properties": {
+    "id": { "type": "string" },
+    "cluster": { "type": "string" },
+    "nodes": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "trigger": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["manual", "http_5xx", "process_exit", "sigsegv"]
+        },
+        "detail": { "type": "string" }
+      }
+    },
+    "captured_at": { "type": "string", "format": "date-time" },
+    "event_count": { "type": "integer", "minimum": 0 },
+    "checksum": { "type": "string" }
+  }
+}

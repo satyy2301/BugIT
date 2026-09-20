@@ -1,0 +1,60 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: dre-agent
+  namespace: dre-engine
+  labels:
+    app: dre-agent
+spec:
+  selector:
+    matchLabels:
+      app: dre-agent
+  template:
+    metadata:
+      labels:
+        app: dre-agent
+    spec:
+      serviceAccountName: dre-agent
+      hostPID: false
+      tolerations:
+        - operator: Exists
+      containers:
+        - name: dre-agent
+          image: bugit/dre-agent:dev
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            privileged: true
+          ports:
+            - name: metrics
+              containerPort: 9100
+          env:
+            - name: DRE_COLLECTOR_ADDR
+              value: dre-collector:9090
+            - name: DRE_NODE_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: DRE_SKIP_BPF
+              value: "1"
+            - name: DRE_MOCK_MODE
+              value: "0"
+          volumeMounts:
+            - name: bpf
+              mountPath: /sys/fs/bpf
+          resources:
+            limits:
+              memory: 128Mi
+            requests:
+              cpu: 50m
+              memory: 64Mi
+      volumes:
+        - name: bpf
+          hostPath:
+            path: /sys/fs/bpf
+            type: DirectoryOrCreate
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: dre-agent
+  namespace: dre-engine

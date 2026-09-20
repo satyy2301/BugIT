@@ -1,0 +1,52 @@
+syntax = "proto3";
+
+package dre.v1;
+
+import "google/protobuf/empty.proto";
+
+option go_package = "github.com/bugit/dre-engine/api/proto/dre/v1;drev1";
+
+message IOEvent {
+  uint64 pid_tgid = 1;
+  uint64 timestamp_ns = 2;
+  uint32 fd = 3;
+  uint32 payload_len = 4;
+  uint32 is_write = 5;
+  bytes comm = 6;
+  bytes payload = 7;
+  string node_id = 8;
+}
+
+message StreamEventsRequest {
+  string node_id = 1;
+}
+
+message TriggerSnapshotRequest {
+  string reason = 1;
+  string detail = 2;
+}
+
+message TriggerSnapshotResponse {
+  string snapshot_id = 1;
+  string path = 2;
+}
+
+message SnapshotInfo {
+  string id = 1;
+  string path = 2;
+  string captured_at = 3;
+  int64 event_count = 4;
+}
+
+message ListSnapshotsResponse {
+  repeated SnapshotInfo snapshots = 1;
+}
+
+service EventIngest {
+  rpc StreamEvents(stream IOEvent) returns (stream StreamEventsRequest);
+}
+
+service CollectorAdmin {
+  rpc TriggerSnapshot(TriggerSnapshotRequest) returns (TriggerSnapshotResponse);
+  rpc ListSnapshots(google.protobuf.Empty) returns (ListSnapshotsResponse);
+}

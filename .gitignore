@@ -1,0 +1,43 @@
+# Binaries
+/bin/
+/dist/
+*.exe
+*.dll
+*.so
+*.dylib
+
+# eBPF build artifacts
+*.o
+*.skel.h
+dre-agent/bpf/vmlinux.h
+dre-agent/bpf/*.bpf.o
+
+# Go
+/vendor/
+*.test
+coverage.out
+
+# Snapshots and secrets
+*.dre
+.env
+.env.*
+*.key
+*.pem
+
+# IDE
+.idea/
+.vscode/settings.json
+*.swp
+*.swo
+
+# Node (VS Code extension)
+node_modules/
+extensions/vscode/out/
+extensions/vscode/*.vsix
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Kind / k8s temp
+.kind/

@@ -1,0 +1,26 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: dre-agent
+  namespace: {{ .Release.Namespace }}
+spec:
+  selector:
+    matchLabels:
+      app: dre-agent
+  template:
+    metadata:
+      labels:
+        app: dre-agent
+    spec:
+      containers:
+        - name: dre-agent
+          image: {{ .Values.agent.image }}
+          securityContext:
+            privileged: true
+          env:
+            - name: DRE_COLLECTOR_ADDR
+              value: dre-collector:9090
+            - name: DRE_SKIP_BPF
+              value: {{ ternary "1" "0" .Values.agent.skipBpf | quote }}
+          resources:
+            {{- toYaml .Values.agent.resources | nindent 12 }}

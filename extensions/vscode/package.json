@@ -1,0 +1,48 @@
+{
+  "name": "bugit-dre",
+  "displayName": "BugIT DRE Engine",
+  "description": "Load and replay DRE snapshots in VS Code",
+  "version": "0.1.0",
+  "publisher": "bugit",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": ["Debuggers"],
+  "activationEvents": [
+    "onCommand:bugit.loadSnapshot"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "bugit.loadSnapshot",
+        "title": "DRE: Load Snapshot"
+      },
+      {
+        "command": "bugit.stepForward",
+        "title": "DRE: Step Forward"
+      },
+      {
+        "command": "bugit.stepBackward",
+        "title": "DRE: Step Backward"
+      }
+    ],
+    "views": {
+      "explorer": [
+        {
+          "id": "bugitTimeline",
+          "name": "DRE Timeline"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p .",
+    "watch": "tsc -watch -p ."
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.3.3"
+  }
+}

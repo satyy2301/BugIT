@@ -1,0 +1,77 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: dre-snapshot-key
+  namespace: dre-engine
+type: Opaque
+stringData:
+  key: dev-insecure-key-change-me
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dre-collector-config
+  namespace: dre-engine
+data:
+  trigger_rules.yaml: |
+    http_5xx:
+      - "HTTP/1.1 5"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dre-collector
+  namespace: dre-engine
+  labels:
+    app: dre-collector
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: dre-collector
+  template:
+    metadata:
+      labels:
+        app: dre-collector
+    spec:
+      containers:
+        - name: dre-collector
+          image: bugit/dre-collector:dev
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+            - name: grpc
+              containerPort: 9090
+          env:
+            - name: DRE_DATA_DIR
+              value: /var/lib/dre
+            - name: DRE_CLUSTER
+              value: kind-local
+            - name: DRE_SNAPSHOT_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: dre-snapshot-key
+                  key: key
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/dre
+      volumes:
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: dre-collector
+  namespace: dre-engine
+spec:
+  selector:
+    app: dre-collector
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+    - name: grpc
+      port: 9090
+      targetPort: 9090

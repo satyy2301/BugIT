@@ -1,0 +1,30 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dre-collector
+  namespace: {{ .Release.Namespace }}
+spec:
+  replicas: {{ .Values.collector.replicas }}
+  selector:
+    matchLabels:
+      app: dre-collector
+  template:
+    metadata:
+      labels:
+        app: dre-collector
+    spec:
+      containers:
+        - name: dre-collector
+          image: {{ .Values.collector.image }}
+          env:
+            - name: DRE_CLUSTER
+              value: {{ .Values.collector.cluster | quote }}
+            - name: DRE_SNAPSHOT_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.snapshot.encryptionSecret }}
+                  key: key
+            {{- if .Values.s3.bucket }}
+            - name: DRE_S3_BUCKET
+              value: {{ .Values.s3.bucket | quote }}
+            {{- end }}
