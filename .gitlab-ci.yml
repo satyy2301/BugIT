@@ -79,6 +79,27 @@ jetbrains:compile:
   rules:
     - when: manual
 
+integration:storage:
+  stage: integration
+  image: golang:${GO_VERSION}-bookworm
+  services:
+    - name: minio/minio:RELEASE.2024-06-11T03-13-04Z
+      alias: minio
+      command: ["server", "/data"]
+  variables:
+    MINIO_ROOT_USER: minioadmin
+    MINIO_ROOT_PASSWORD: minioadmin
+    DRE_S3_ENDPOINT: http://minio:9000
+    DRE_S3_BUCKET: dre-test
+    DRE_S3_REGION: us-east-1
+    DRE_S3_ACCESS_KEY: minioadmin
+    DRE_S3_SECRET_KEY: minioadmin
+    DRE_S3_FORCE_PATH_STYLE: "1"
+  script:
+    - bash test/integration/s3_upload_test.sh
+  rules:
+    - when: manual
+
 integration:kind:
   stage: integration
   image: golang:${GO_VERSION}-bookworm
@@ -91,6 +112,21 @@ integration:kind:
     - ./kind create cluster --name dre-engine || true
     - make kind-load deploy-kind
     - bash test/integration/kind_capture_test.sh
-    - bash test/perf/agent_load.sh
+    - bash test/perf/load_test.sh
+  rules:
+    - when: manual
+
+perf:nightly:
+  stage: integration
+  image: golang:${GO_VERSION}-bookworm
+  before_script:
+    - apt-get update && apt-get install -y clang llvm libbpf-dev linux-headers-amd64 docker.io
+    - curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.24.0/kind-linux-amd64 && chmod +x ./kind
+    - go install github.com/cilium/ebpf/cmd/bpf2go@v0.16.0
+  script:
+    - make build-linux docker
+    - ./kind create cluster --name dre-engine || true
+    - make kind-load deploy-kind
+    - bash test/perf/load_test.sh
   rules:
     - when: manual

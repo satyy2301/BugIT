@@ -1,0 +1,30 @@
+# GKE overlay — apply after terraform/gke outputs
+agent:
+  image: us-central1-docker.pkg.dev/PROJECT/bugit/dre-agent:latest
+  nodeSelector:
+    cloud.google.com/gke-os-distribution: cos
+  tolerations:
+    - operator: Exists
+
+collector:
+  image: us-central1-docker.pkg.dev/PROJECT/bugit/dre-collector:latest
+  cluster: gke-production
+  replicas: 2
+  leaderElect: true
+  serviceAccount:
+    annotations:
+      iam.gke.io/gcp-service-account: "" # terraform output collector_gcp_sa_email
+
+pvc:
+  enabled: true
+  size: 20Gi
+  storageClassName: standard-rwo
+
+gcs:
+  bucket: "" # terraform output gcs_bucket
+  prefix: dre/snapshots
+
+grpc:
+  tls:
+    enabled: true
+    secretName: dre-grpc-tls

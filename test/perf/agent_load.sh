@@ -35,8 +35,22 @@ fi
 
 drop_pct=$((drops * 100 / total))
 echo "drops=$drops events=$events drop_pct=${drop_pct}%"
+passed=true
 if [[ "$drop_pct" -gt "$MAX_DROP_PCT" ]]; then
   echo "drop rate ${drop_pct}% exceeds ${MAX_DROP_PCT}% threshold"
+  passed=false
+fi
+
+if [[ "${PERF_JSON:-}" == "1" ]]; then
+  json_path="${PERF_JSON_PATH:-test/perf/results.json}"
+  mkdir -p "$(dirname "$json_path")"
+  cat >"$json_path" <<EOF
+{"drops":$drops,"events":$events,"drop_pct":$drop_pct,"max_drop_pct":$MAX_DROP_PCT,"target_rps":$TARGET_RPS,"duration_s":$DURATION,"passed":$passed}
+EOF
+  echo "wrote $json_path"
+fi
+
+if [[ "$passed" != true ]]; then
   exit 1
 fi
 echo "load test passed"

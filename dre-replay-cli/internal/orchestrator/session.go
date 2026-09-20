@@ -14,6 +14,7 @@ import (
 	"github.com/bugit/dre-engine/dre-replay-cli/internal/debugger"
 	"github.com/bugit/dre-engine/dre-replay-cli/internal/delve"
 	"github.com/bugit/dre-engine/dre-replay-cli/internal/proxy"
+	"github.com/bugit/dre-engine/dre-replay-cli/internal/summary"
 	"github.com/bugit/dre-engine/dre-replay-cli/internal/timefreeze"
 )
 
@@ -34,6 +35,7 @@ type Session struct {
 	dbg      *debugger.Server
 	timeEng  *timefreeze.Engine
 	dlv      *delve.Bridge
+	cor      map[int]delve.Correlation
 	target   *exec.Cmd
 	stopped  bool
 }
@@ -55,6 +57,7 @@ func New(snap *archive.Snapshot, cfg config.ReplayConfig, opts Options) *Session
 		binary:        opts.Binary,
 		delveAddr:     opts.DelveAddr,
 		breakpoints:   make(map[int]bool),
+		cor:           delve.BuildCorrelations(summary.SummarizeEvents(snap.Events)),
 	}
 }
 
@@ -75,6 +78,7 @@ func (s *Session) Seek(index int) int {
 	}
 	s.cursor = index
 	s.onCursorChange()
+	delve.LogSeek(index, s.cor)
 	return s.cursor
 }
 

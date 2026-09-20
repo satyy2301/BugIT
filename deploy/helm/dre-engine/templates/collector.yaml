@@ -73,6 +73,18 @@ spec:
               value: "1"
             {{- end }}
             {{- end }}
+            {{- if .Values.gcs.bucket }}
+            - name: DRE_GCS_BUCKET
+              value: {{ .Values.gcs.bucket | quote }}
+            - name: DRE_GCS_PREFIX
+              value: {{ .Values.gcs.prefix | quote }}
+            {{- end }}
+            {{- if .Values.grpc.tls.enabled }}
+            - name: DRE_GRPC_TLS_CERT_FILE
+              value: /etc/dre/tls/tls.crt
+            - name: DRE_GRPC_TLS_KEY_FILE
+              value: /etc/dre/tls/tls.key
+            {{- end }}
           resources:
             {{- toYaml .Values.collector.resources | nindent 12 }}
           volumeMounts:
@@ -80,6 +92,11 @@ spec:
               mountPath: /var/lib/dre
             - name: config
               mountPath: /etc/dre
+            {{- if .Values.grpc.tls.enabled }}
+            - name: grpc-tls
+              mountPath: /etc/dre/tls
+              readOnly: true
+            {{- end }}
       volumes:
         - name: data
           {{- if .Values.pvc.enabled }}
@@ -91,3 +108,8 @@ spec:
         - name: config
           configMap:
             name: dre-collector-config
+        {{- if .Values.grpc.tls.enabled }}
+        - name: grpc-tls
+          secret:
+            secretName: {{ .Values.grpc.tls.secretName }}
+        {{- end }}

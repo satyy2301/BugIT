@@ -33,7 +33,7 @@ You should see:
 .\bin\dre-replay.exe run --dre test\fixtures\demo-checkout-500.dre --config deploy\replay.yaml
 ```
 
-The replay panel shows **Step Forward/Back** buttons, a **Mermaid service graph**, events grouped by service, and clock timeline. Click any event row to see the full payload.
+The replay panel shows a **current event bar**, compact **event timeline** at the top, payload detail, and a **cursor-aware service flow** strip. Click any event row to seek the replay cursor. Vector graph and grouped views are in collapsed sections below.
 
 ### Remote load from collector
 
@@ -63,6 +63,24 @@ With `kubectl port-forward` to dre-collector on port 8080:
 3. Set breakpoints in your app, step the replay cursor in the DRE panel, and inspect locals as the proxy replays captured traffic.
 
 Delve listen address comes from `delve_addr` in the IDE payload or `bugit.delveAddr` in settings (default `127.0.0.1:2345`).
+
+### Delve ↔ event-index correlation (MVP)
+
+1. Load snapshot and start replay with `--binary` (or attach to running `dlv`)
+2. **DRE: Attach Delve** — use the Go extension debug session
+3. Click an event row or step — status bar shows `DRE: Event N · pid=… · comm=…`
+4. **DRE: Open Source at Current Event** — guidance for correlating replay cursor with Go breakpoints
+
+Full automatic source-line mapping is planned post-beta; MVP uses pid/comm hints from captured events.
+
+## Cloud deploy (EKS / GKE)
+
+See runbooks:
+
+- [EKS deploy](runbooks/eks-deploy.md) — Terraform IRSA + S3 + Helm `values-eks.yaml`
+- [GKE deploy](runbooks/gke-deploy.md) — Workload Identity + GCS + Helm `values-gke.yaml`
+
+Import Grafana dashboards from `deploy/monitoring/dashboards/` after deploy.
 
 ## What does "replay" mean?
 

@@ -1,0 +1,53 @@
+{
+  "title": "DRE Collector",
+  "uid": "dre-collector",
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "panels": [
+    {
+      "type": "timeseries",
+      "title": "Events ingested",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "expr": "rate(dre_collector_events_ingested_total[5m])",
+          "legendFormat": "ingest/s"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Snapshots exported",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "targets": [
+        {
+          "expr": "increase(dre_collector_snapshots_total[1h])",
+          "legendFormat": "snapshots/h"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Leader",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 8 },
+      "targets": [
+        {
+          "expr": "dre_collector_is_leader",
+          "legendFormat": "is_leader"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Snapshot export duration (p95)",
+      "gridPos": { "h": 8, "w": 18, "x": 0, "y": 12 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(dre_collector_snapshot_export_seconds_bucket[5m])) by (le))",
+          "legendFormat": "p95"
+        }
+      ]
+    }
+  ]
+}

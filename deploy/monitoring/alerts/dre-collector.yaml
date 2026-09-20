@@ -1,0 +1,20 @@
+groups:
+  - name: dre-collector
+    rules:
+      - alert: DreCollectorNoLeader
+        expr: sum(dre_collector_is_leader) == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: No DRE collector leader
+          description: Leader election may be stuck; ingest and snapshots halted.
+
+      - alert: DreCollectorSnapshotFailures
+        expr: increase(dre_collector_snapshot_export_failures_total[15m]) > 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: DRE snapshot export failures
+          description: Collector failed to export snapshots. See docs/runbooks/snapshot-failure.md.

@@ -3,7 +3,7 @@ import { spawn, ChildProcess } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import { downloadSnapshot, listSnapshots, pickLatest } from './collector';
-import { debuggerRequest, isDebuggerReachable, parseDebugAddr } from './replayClient';
+import { debuggerRequest, DebuggerResponse, isDebuggerReachable, parseDebugAddr } from './replayClient';
 
 let panel: vscode.WebviewPanel | undefined;
 let currentPayload: IDELoadResponse | undefined;
@@ -12,6 +12,7 @@ let selectedEventIndex = 0;
 let replayProcess: ChildProcess | undefined;
 let drePath: string | undefined;
 let extensionContext: vscode.ExtensionContext;
+let eventStatusBar: vscode.StatusBarItem | undefined;
 
 interface EventSummary {
   index: number;
@@ -22,6 +23,9 @@ interface EventSummary {
   payload?: string;
   is_error: boolean;
   timestamp_ns: number;
+  pid?: number;
+  tid?: number;
+  comm?: string;
 }
 
 interface Incident {
@@ -64,6 +68,9 @@ interface IDELoadResponse {
 
 export function activate(context: vscode.ExtensionContext) {
   extensionContext = context;
+  eventStatusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
+  eventStatusBar.name = 'DRE Event';
+  context.subscriptions.push(eventStatusBar);
   context.subscriptions.push(
     vscode.commands.registerCommand('bugit.loadSnapshot', loadSnapshot),
     vscode.commands.registerCommand('bugit.fetchLatest', fetchLatest),
@@ -73,6 +80,7 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('bugit.attachDelve', attachDelve),
     vscode.commands.registerCommand('bugit.startReplayDebug', startReplayDebug),
     vscode.commands.registerCommand('bugit.stopReplay', stopReplay),
+    vscode.commands.registerCommand('bugit.openSourceAtEvent', openSourceAtEvent),
     vscode.debug.registerDebugConfigurationProvider('bugit-dre', {
       resolveDebugConfiguration: () => ({
         type: 'bugit-dre',
@@ -247,6 +255,7 @@ async function loadSnapshotFromPath(filePath: string) {
       highlightedIndex = 0;
       selectedEventIndex = 0;
       await startReplay(replayBin, drePath!, key, configPath, currentPayload.replay?.debug_addr);
+      updateEventStatusBar(0);
       renderPanel();
       const title = currentPayload.manifest.incident?.title ?? currentPayload.manifest.id;
       vscode.window.showInformationMessage(`Loaded: ${title}`);
@@ -638,6 +647,37 @@ function esc(s: string): string {
     .replace(/"/g, '&quot;');
 }
 
+function updateEventStatusBar(index: number, resp?: DebuggerResponse) {
+  if (!eventStatusBar) {
+    return;
+  }
+  const ev = currentPayload?.events?.find((e) => e.index === index);
+  const pid = Number(resp?.pid ?? ev?.pid ?? 0);
+  const comm = String(resp?.comm ?? ev?.comm ?? ev?.service ?? '—');
+  eventStatusBar.text = `DRE: Event ${index + 1} · pid=${pid} · ${comm}`;
+  eventStatusBar.tooltip = 'Replay cursor — attach Delve to inspect Go source at this process';
+  eventStatusBar.show();
+}
+
+async function openSourceAtEvent() {
+  const ev = currentPayload?.events?.find((e) => e.index === highlightedIndex);
+  if (!ev) {
+    vscode.window.showWarningMessage('Load a snapshot and seek to an event first');
+    return;
+  }
+  const delveSessions = vscode.debug.activeDebugSession;
+  if (!delveSessions || delveSessions.type !== 'go') {
+    vscode.window.showInformationMessage(
+      `Event ${highlightedIndex + 1}: pid=${ev.pid ?? 0} comm=${ev.comm ?? ev.service}. ` +
+        'Run DRE: Attach Delve, set breakpoints in Go source, then step replay cursor.',
+    );
+    return;
+  }
+  vscode.window.showInformationMessage(
+    `Delve active — correlate event ${highlightedIndex + 1} (pid=${ev.pid ?? 0}) with your Go breakpoints.`,
+  );
+}
+
 async function debuggerCall(method: string, seekIndex?: number) {
   if (!currentPayload) {
     vscode.window.showWarningMessage('Load a snapshot first');
@@ -656,6 +696,7 @@ async function debuggerCall(method: string, seekIndex?: number) {
     if (!Number.isNaN(idx)) {
       highlightedIndex = idx;
       selectedEventIndex = idx;
+      updateEventStatusBar(idx, resp);
       renderPanel();
     }
   } catch (err) {

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log"
 	"net"
+	"strings"
 	"sync"
 
 	"github.com/bugit/dre-engine/api/ioevent"
@@ -128,6 +129,12 @@ func (s *Server) dispatch(method string, seekIndex int, enabled bool) map[string
 	}
 	if evt != nil {
 		resp["timestamp_ns"] = evt.TimestampNs
+		resp["pid"] = uint32(evt.PidTgid >> 32)
+		resp["tid"] = uint32(evt.PidTgid)
+		comm := strings.TrimSpace(strings.TrimRight(string(evt.Comm[:]), "\x00"))
+		if comm != "" {
+			resp["comm"] = comm
+		}
 	}
 	if reason := s.ctrl.StoppedReason(idx); reason != "" {
 		resp["stopped_reason"] = reason

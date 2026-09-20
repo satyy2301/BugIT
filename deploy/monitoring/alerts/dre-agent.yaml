@@ -1,0 +1,24 @@
+groups:
+  - name: dre-agent
+    rules:
+      - alert: DreAgentHighDropRate
+        expr: |
+          (
+            rate(dre_ringbuf_drops_total[5m])
+            / (rate(dre_events_emitted_total[5m]) + rate(dre_ringbuf_drops_total[5m]) + 1e-9)
+          ) > 0.01
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: DRE agent ringbuf drop rate above 1%
+          description: Agent {{ $labels.pod }} drop ratio exceeds cloud beta NFR.
+
+      - alert: DreAgentBypassEnabled
+        expr: dre_bypass_mode == 1
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: DRE agent in bypass mode
+          description: Kernel capture bypassed on {{ $labels.pod }}. See docs/runbooks/bypass-enabled.md.

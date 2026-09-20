@@ -1,0 +1,31 @@
+# EKS overlay — apply after terraform/eks outputs
+agent:
+  image: 123456789012.dkr.ecr.us-east-1.amazonaws.com/bugit/dre-agent:latest
+  nodeSelector:
+    kubernetes.io/os: linux
+  tolerations:
+    - operator: Exists
+
+collector:
+  image: 123456789012.dkr.ecr.us-east-1.amazonaws.com/bugit/dre-collector:latest
+  cluster: eks-production
+  replicas: 2
+  leaderElect: true
+  serviceAccount:
+    annotations:
+      eks.amazonaws.com/role-arn: "" # terraform output collector_iam_role_arn
+
+pvc:
+  enabled: true
+  size: 20Gi
+  storageClassName: gp3
+
+s3:
+  bucket: "" # terraform output s3_bucket
+  prefix: dre/snapshots
+  region: us-east-1
+
+grpc:
+  tls:
+    enabled: true
+    secretName: dre-grpc-tls

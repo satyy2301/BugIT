@@ -17,6 +17,9 @@ type EventSummary struct {
 	Payload        string `json:"payload"`
 	IsError        bool   `json:"is_error"`
 	TimestampNs    uint64 `json:"timestamp_ns"`
+	Pid            uint32 `json:"pid"`
+	Tid            uint32 `json:"tid"`
+	Comm           string `json:"comm"`
 }
 
 func SummarizeEvents(events []ioevent.IOEvent) []EventSummary {
@@ -58,6 +61,9 @@ func SummarizeEvents(events []ioevent.IOEvent) []EventSummary {
 			Payload:        full,
 			IsError:        isErr,
 			TimestampNs:    e.TimestampNs,
+			Pid:            uint32(e.PidTgid >> 32),
+			Tid:            uint32(e.PidTgid),
+			Comm:           svc,
 		})
 	}
 	return out

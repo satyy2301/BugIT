@@ -9,6 +9,7 @@ import (
 
 	"github.com/bugit/dre-engine/api/grpcapi"
 	"github.com/bugit/dre-engine/api/ioevent"
+	"github.com/bugit/dre-engine/pkg/grpctls"
 	"github.com/bugit/dre-engine/pkg/vectorclock"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -32,9 +33,15 @@ func (c *Client) Connect(ctx context.Context) error {
 	if c.conn != nil {
 		return nil
 	}
-	opts := []grpc.DialOption{
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-		grpc.WithBlock(),
+	opts := []grpc.DialOption{grpc.WithBlock()}
+	if grpctls.ClientEnabled() {
+		creds, err := grpctls.ClientCredentials()
+		if err != nil {
+			return err
+		}
+		opts = append(opts, grpc.WithTransportCredentials(creds))
+	} else {
+		opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	}
 	conn, err := grpc.DialContext(ctx, c.addr, opts...)
 	if err != nil {

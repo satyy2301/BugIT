@@ -15,6 +15,10 @@ spec:
       serviceAccountName: dre-agent
       tolerations:
         - operator: Exists
+      {{- with .Values.agent.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       containers:
         - name: dre-agent
           image: {{ .Values.agent.image }}
@@ -41,6 +45,10 @@ spec:
               value: {{ .Values.agent.memoryLimitBytes | quote }}
             - name: DRE_METRICS_ADDR
               value: ":9100"
+            {{- if .Values.grpc.tls.enabled }}
+            - name: DRE_GRPC_TLS_CA_FILE
+              value: /etc/dre/tls/ca.crt
+            {{- end }}
           volumeMounts:
             - name: bpf
               mountPath: /sys/fs/bpf
@@ -48,6 +56,11 @@ spec:
               mountPath: /sys/kernel/tracing
             - name: debugfs
               mountPath: /sys/kernel/debug
+            {{- if .Values.grpc.tls.enabled }}
+            - name: grpc-tls
+              mountPath: /etc/dre/tls
+              readOnly: true
+            {{- end }}
           resources:
             {{- toYaml .Values.agent.resources | nindent 12 }}
       volumes:
@@ -63,3 +76,11 @@ spec:
           hostPath:
             path: /sys/kernel/debug
             type: Directory
+        {{- if .Values.grpc.tls.enabled }}
+        - name: grpc-tls
+          secret:
+            secretName: {{ .Values.grpc.tls.secretName }}
+            items:
+              - key: ca.crt
+                path: ca.crt
+        {{- end }}

@@ -42,7 +42,11 @@ func main() {
 	collector := server.New(dataDir, cluster, key, uploader)
 	if err := leader.RunElection(ctx, func(leadCtx context.Context) {
 		isLeader.Store(true)
-		defer isLeader.Store(false)
+		metrics.IsLeader.Set(1)
+		defer func() {
+			isLeader.Store(false)
+			metrics.IsLeader.Set(0)
+		}()
 		if err := collector.Run(leadCtx, grpcAddr, httpAddr); err != nil {
 			log.Printf("collector stopped: %v", err)
 		}

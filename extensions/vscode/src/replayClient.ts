@@ -4,6 +4,9 @@ export interface DebuggerResponse {
   index?: number;
   total?: number;
   stopped_reason?: string;
+  pid?: number;
+  tid?: number;
+  comm?: string;
   event?: { summary?: string };
 }
 

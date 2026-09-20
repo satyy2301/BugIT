@@ -22,6 +22,7 @@ import (
 	"github.com/bugit/dre-engine/dre-collector/internal/storage"
 	"github.com/bugit/dre-engine/dre-collector/internal/trigger"
 	"github.com/bugit/dre-engine/dre-collector/internal/vector"
+	"github.com/bugit/dre-engine/pkg/grpctls"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/health"
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
@@ -65,6 +66,7 @@ func New(dataDir, cluster, key string, uploader storage.Uploader) *Collector {
 }
 
 func (c *Collector) captureSnapshot(trig manifest.Trigger) {
+	start := time.Now()
 	events := c.buf.Snapshot()
 	graph := c.vector.Graph()
 	var redactLog manifest.RedactionLog
@@ -76,6 +78,7 @@ func (c *Collector) captureSnapshot(trig manifest.Trigger) {
 	}
 	m, path, err := c.exporter.Export(events, graph, redactLog, trig)
 	if err != nil {
+		metrics.SnapshotExportFailures.Inc()
 		log.Printf("snapshot export failed: %v", err)
 		return
 	}
@@ -113,6 +116,7 @@ func (c *Collector) captureSnapshot(trig manifest.Trigger) {
 	c.snapshots = append(c.snapshots, info)
 	c.mu.Unlock()
 	metrics.SnapshotsExported.Inc()
+	metrics.SnapshotExportDuration.Observe(time.Since(start).Seconds())
 	log.Printf("snapshot written: %s events=%d storage=%s", path, m.EventCount, info.StorageUri)
 }
 
@@ -153,7 +157,16 @@ func (c *Collector) Run(ctx context.Context, grpcAddr, httpAddr string) error {
 	c.SetReady(true)
 	defer c.SetReady(false)
 
-	grpcSrv := grpc.NewServer()
+	var grpcOpts []grpc.ServerOption
+	if grpctls.ServerEnabled() {
+		creds, err := grpctls.ServerCredentials()
+		if err != nil {
+			return err
+		}
+		grpcOpts = append(grpcOpts, grpc.Creds(creds))
+		log.Printf("gRPC TLS enabled")
+	}
+	grpcSrv := grpc.NewServer(grpcOpts...)
 	grpcapi.RegisterEventIngestServer(grpcSrv, c)
 	grpcapi.RegisterCollectorAdminServer(grpcSrv, c)
 	healthSrv := health.NewServer()

@@ -8,6 +8,7 @@ agent:
       memory: 128Mi
   skipBpf: false
   memoryLimitBytes: 536870912
+  nodeSelector: {}
 
 collector:
   image: bugit/dre-collector:dev
@@ -20,6 +21,8 @@ collector:
     requests:
       cpu: 100m
       memory: 256Mi
+  serviceAccount:
+    annotations: {}
 
 snapshot:
   encryptionSecret: dre-snapshot-key
@@ -31,6 +34,16 @@ s3:
   region: us-east-1
   endpoint: ""
 
+gcs:
+  bucket: ""
+  prefix: ""
+
 pvc:
   enabled: true
   size: 5Gi
+  storageClassName: ""
+
+grpc:
+  tls:
+    enabled: false
+    secretName: dre-grpc-tls

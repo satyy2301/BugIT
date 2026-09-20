@@ -83,6 +83,10 @@
       {
         "command": "bugit.stopReplay",
         "title": "DRE: Stop Replay"
+      },
+      {
+        "command": "bugit.openSourceAtEvent",
+        "title": "DRE: Open Source at Current Event"
       }
     ],
     "debuggers": [

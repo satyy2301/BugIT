@@ -1,6 +1,6 @@
 # BugIT DRE-Engine — PRD v2.0 (Post-Prototype)
 
-**Status:** Phase 1 complete, Phase 2 complete, Phase 3 complete, Phase 4 complete  
+**Status:** Phase 1 complete, Phase 2 complete, Phase 3 complete, Phase 4 complete, Phase 5 complete  
 **Target:** Q1 2027 beta
 
 ## Phase 1 — Real capture
@@ -66,6 +66,29 @@
 
 **Verify:** `go test ./dre-replay-cli/...`, `cd extensions/vscode && npm run compile`, JetBrains `buildPlugin`
 
+## Phase 5 — Cloud beta (EKS/GKE + observability + compliance)
+
+| Req ID | Requirement | Status |
+|--------|-------------|--------|
+| REQ-CLD-001 | EKS/GKE Terraform + Helm overlays | Done — `deploy/terraform/eks`, `deploy/terraform/gke`, `values-eks.yaml`, `values-gke.yaml` |
+| REQ-CLD-002 | mTLS agent→collector gRPC | Done — `pkg/grpctls`, Helm `grpc.tls`, cert-manager example |
+| REQ-CLD-003 | Grafana dashboards + alerts | Done — `deploy/monitoring/` |
+| REQ-CLD-004 | Cloud beta NFR gates | Done — `docs/nfr-cloud-beta.md`, `test/perf/load_test.sh` |
+| REQ-CLD-005 | SOC2 mapping + runbooks | Done — `docs/compliance/`, `docs/runbooks/` |
+| REQ-CLD-006 | Delve event-index correlation MVP | Done — `delve/sync.go`, VS Code status bar |
+
+**Acceptance checklist**
+
+- [x] Terraform provisions S3/GCS + IAM/WI for collector upload
+- [x] Helm EKS/GKE values deploy with IRSA / Workload Identity annotations
+- [x] Grafana JSON dashboards import for agent + collector metrics
+- [x] Prometheus alert rules for bypass, drops, snapshot failures, no leader
+- [x] `integration:storage` CI job with MinIO
+- [x] Seek shows pid/comm in debugger TCP response and VS Code status bar
+- [x] Runbooks for EKS deploy, GKE deploy, bypass, snapshot failure, rollback
+
+**Verify:** `go test ./dre-replay-cli/...`, `cd extensions/vscode && npm run compile`, follow `docs/runbooks/eks-deploy.md`
+
 ## Later phases
 
-Phase 5: cloud beta NFRs (EKS/GKE, Grafana, SOC2 runbooks), full Go source-line ↔ event-index Delve sync.
+Full Go source-line ↔ event-index Delve auto-breakpoints, SOC2 Type II audit, multi-region HA buffer.
