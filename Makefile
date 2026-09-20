@@ -1,4 +1,4 @@
-.PHONY: all bpf build test lint docker kind-up deploy-kind clean proto
+.PHONY: all bpf build test lint docker kind-up deploy-kind clean proto demo-snapshot
 
 GO       ?= go
 CLANG    ?= clang
@@ -36,6 +36,9 @@ build:
 	@$(GO) build -o $(COLLECTOR_BIN) ./dre-collector/cmd/dre-collector
 	@$(GO) build -o $(CLI_BIN) ./dre-collector/cmd/dre-cli
 	@$(GO) build -o $(REPLAY_BIN) ./dre-replay-cli/cmd/dre-replay
+
+demo-snapshot:
+	$(GO) run ./scripts/generate-demo-snapshot -out test/fixtures/demo-checkout-500.dre
 
 test:
 	$(GO) test ./...

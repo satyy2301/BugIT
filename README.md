@@ -23,15 +23,26 @@ make deploy-kind
 dre-cli trigger --collector http://localhost:8080
 ```
 
+## Demo snapshot (try first)
+
+```powershell
+go run ./scripts/generate-demo-snapshot -out test/fixtures/demo-checkout-500.dre
+# VS Code: extensions/vscode → F5 → DRE: Load Snapshot → pick demo-checkout-500.dre
+```
+
+See [Demo walkthrough](docs/demo-walkthrough.md) for what the bug is and how replay works.
+
 ## Build
 
 ```bash
 make build          # all Go binaries
 make bpf            # eBPF objects (Linux only)
+make demo-snapshot  # generate test/fixtures/demo-checkout-500.dre
 make test
 ```
 
 ## Documentation
 
 - [PRD](docs/PRD.md)
+- [Demo walkthrough](docs/demo-walkthrough.md)
 - [Dev environments](docs/dev-environments.md)

@@ -12,6 +12,7 @@ import (
 	"github.com/bugit/dre-engine/dre-replay-cli/internal/archive"
 	"github.com/bugit/dre-engine/dre-replay-cli/internal/debugger"
 	"github.com/bugit/dre-engine/dre-replay-cli/internal/proxy"
+	"github.com/bugit/dre-engine/dre-replay-cli/internal/summary"
 )
 
 func main() {
@@ -35,6 +36,7 @@ func runLoad(args []string) {
 	path := fs.String("dre", "", "path to .dre snapshot")
 	key := fs.String("key", "dev-insecure-key-change-me", "AES key")
 	format := fs.String("format", "manifest", "output format: manifest or ide")
+	proxyAddr := fs.String("proxy", "127.0.0.1:18080", "replay proxy address for ide output")
 	_ = fs.Parse(args)
 
 	snap, err := archive.Open(*path, *key)
@@ -49,6 +51,13 @@ func runLoad(args []string) {
 			"vector_graph":  snap.VectorGraph,
 			"event_count":   len(snap.Events),
 			"vector_nodes":  len(snap.VectorGraph.Nodes),
+			"events":        summary.SummarizeEvents(snap.Events),
+			"flow":          summary.FlowDescription(snap.Events),
+			"replay": map[string]string{
+				"proxy_addr": *proxyAddr,
+				"debug_addr": "127.0.0.1:19090",
+				"status":     "ready",
+			},
 		})
 		return
 	}

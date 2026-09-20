@@ -23,6 +23,19 @@
     },
     "captured_at": { "type": "string", "format": "date-time" },
     "event_count": { "type": "integer", "minimum": 0 },
-    "checksum": { "type": "string" }
+    "checksum": { "type": "string" },
+    "incident": {
+      "type": "object",
+      "properties": {
+        "title": { "type": "string" },
+        "summary": { "type": "string" },
+        "root_cause": { "type": "string" },
+        "services": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "failed_step": { "type": "string" }
+      }
+    }
   }
 }

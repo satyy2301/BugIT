@@ -16,6 +16,15 @@ type Trigger struct {
 	Detail string      `json:"detail,omitempty"`
 }
 
+// Incident holds human-readable bug context for IDE display.
+type Incident struct {
+	Title      string   `json:"title"`
+	Summary    string   `json:"summary"`
+	RootCause  string   `json:"root_cause"`
+	Services   []string `json:"services"`
+	FailedStep string   `json:"failed_step"`
+}
+
 type Manifest struct {
 	ID          string    `json:"id"`
 	Cluster     string    `json:"cluster"`
@@ -24,6 +33,7 @@ type Manifest struct {
 	CapturedAt  time.Time `json:"captured_at"`
 	EventCount  int       `json:"event_count"`
 	Checksum    string    `json:"checksum"`
+	Incident    *Incident `json:"incident,omitempty"`
 }
 
 type VectorGraph struct {

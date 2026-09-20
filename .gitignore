@@ -19,6 +19,7 @@ coverage.out
 
 # Snapshots and secrets
 *.dre
+!test/fixtures/*.dre
 .env
 .env.*
 *.key

@@ -2,6 +2,7 @@ package drearchive_test
 
 import (
 	"bytes"
+	"os"
 	"testing"
 
 	"github.com/bugit/dre-engine/api/ioevent"
@@ -36,6 +37,26 @@ func TestPackEncryptDecrypt(t *testing.T) {
 	}
 	if len(snap.Events) != 1 || snap.Events[0].Fd != 3 {
 		t.Fatalf("unexpected events: %+v", snap.Events)
+	}
+}
+
+func TestDemoCheckoutFixture(t *testing.T) {
+	path := "../../test/fixtures/demo-checkout-500.dre"
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		t.Skip("run: go run ./scripts/generate-demo-snapshot")
+	}
+	snap, err := drearchive.OpenFile(path, "dev-insecure-key-change-me")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snap.Manifest.Incident == nil || snap.Manifest.Incident.Title == "" {
+		t.Fatal("expected incident title in demo fixture")
+	}
+	if len(snap.Events) < 8 {
+		t.Fatalf("expected >= 8 events, got %d", len(snap.Events))
+	}
+	if snap.Manifest.Trigger.Type != manifest.TriggerHTTP5xx {
+		t.Fatalf("expected http_5xx trigger, got %s", snap.Manifest.Trigger.Type)
 	}
 }
 
