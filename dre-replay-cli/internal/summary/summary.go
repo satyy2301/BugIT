@@ -6,12 +6,15 @@ import (
 	"github.com/bugit/dre-engine/api/ioevent"
 )
 
+const maxPayloadBytes = 2048
+
 type EventSummary struct {
 	Index          int    `json:"index"`
 	Service        string `json:"service"`
 	Direction      string `json:"direction"`
 	Summary        string `json:"summary"`
 	PayloadPreview string `json:"payload_preview"`
+	Payload        string `json:"payload"`
 	IsError        bool   `json:"is_error"`
 	TimestampNs    uint64 `json:"timestamp_ns"`
 }
@@ -42,12 +45,17 @@ func SummarizeEvents(events []ioevent.IOEvent) []EventSummary {
 			preview = preview[:120] + "..."
 		}
 		preview = strings.ReplaceAll(preview, "\r\n", " ")
+		full := payload
+		if len(full) > maxPayloadBytes {
+			full = full[:maxPayloadBytes] + "..."
+		}
 		out = append(out, EventSummary{
 			Index:          i,
 			Service:        svc,
 			Direction:      dir,
 			Summary:        sum,
 			PayloadPreview: preview,
+			Payload:        full,
 			IsError:        isErr,
 			TimestampNs:    e.TimestampNs,
 		})

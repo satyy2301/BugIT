@@ -1,0 +1,15 @@
+<idea-plugin>
+  <id>com.bugit.dre</id>
+  <name>BugIT DRE Engine</name>
+  <vendor>bugit</vendor>
+  <description>Load DRE snapshot files and inspect incident timelines.</description>
+  <depends>com.intellij.modules.platform</depends>
+  <extensions>
+    <toolWindow id="DRE Replay" anchor="bottom" factoryClass="com.bugit.dre.DreToolWindowFactory"/>
+  </extensions>
+  <actions>
+    <action id="DreLoadSnapshot" class="com.bugit.dre.LoadSnapshotAction" text="DRE: Load Snapshot">
+      <add-to-group group-id="ToolsMenu" anchor="last"/>
+    </action>
+  </actions>
+</idea-plugin>

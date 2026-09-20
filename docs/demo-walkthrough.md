@@ -16,7 +16,7 @@ A customer tries to checkout order **ORD-8842**. The flow fails like this:
 ### VS Code extension
 
 1. Open `extensions/vscode` and press **F5**
-2. In the Extension Development Host: **Ctrl+Shift+P** → **DRE: Load Snapshot**
+2. In the Extension Development Host: **Ctrl+Shift+P** → **DRE: Load Snapshot** (or **DRE: Fetch Latest Snapshot** if collector is running)
 3. Pick `test/fixtures/demo-checkout-500.dre`
 
 You should see:
@@ -33,7 +33,22 @@ You should see:
 .\bin\dre-replay.exe run --dre test\fixtures\demo-checkout-500.dre --config deploy\replay.yaml
 ```
 
-The replay panel shows **Step Forward/Back** buttons, vector graph edges, and clock timeline.
+The replay panel shows **Step Forward/Back** buttons, a **Mermaid service graph**, events grouped by service, and clock timeline. Click any event row to see the full payload.
+
+### Remote load from collector
+
+With `kubectl port-forward` to dre-collector on port 8080:
+
+1. Set `bugit.collectorUrl` to `http://localhost:8080` (default)
+2. **DRE: Fetch Latest Snapshot** — downloads `latest.dre` and opens the panel
+3. Or **DRE: Load from Collector** — pick from a list of snapshots
+
+### DAP replay debugging (event-index breakpoints)
+
+1. Load a snapshot and ensure replay is running
+2. **Ctrl+Shift+P** → **DRE: Start Replay Debug Session**
+3. Click **BP** on an event row (or set breakpoints in the `dre-timeline` stack)
+4. Use **Step Forward** — execution stops when the replay cursor hits a breakpoint event
 
 ### Delve attach (headless debugging)
 

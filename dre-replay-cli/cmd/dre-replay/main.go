@@ -69,12 +69,13 @@ func runLoad(args []string) {
 			"events":         summary.SummarizeEvents(snap.Events),
 			"flow":           summary.FlowDescription(snap.Events),
 			"clock_timeline": snap.ClockTimeline,
-			"replay": map[string]string{
-				"proxy_addr":  cfg.ProxyAddr,
-				"debug_addr":  cfg.DebugAddr,
-				"delve_addr":  *delveAddr,
-				"status":      "ready",
-				"config_path": *cfgPath,
+			"replay": map[string]interface{}{
+				"proxy_addr":   cfg.ProxyAddr,
+				"debug_addr":   cfg.DebugAddr,
+				"delve_addr":   *delveAddr,
+				"delve_ready":  false,
+				"status":       "ready",
+				"config_path":  *cfgPath,
 			},
 		})
 		return

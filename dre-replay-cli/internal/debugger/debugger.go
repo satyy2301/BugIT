@@ -16,14 +16,17 @@ type Controller interface {
 	Seek(index int) int
 	Step(delta int) int
 	Events() []ioevent.IOEvent
+	SetBreakpoint(index int, enabled bool)
+	ClearBreakpoints()
+	StoppedReason(idx int) string
 }
 
 type Server struct {
-	addr   string
-	ctrl   Controller
+	addr    string
+	ctrl    Controller
 	timeEng *timefreeze.Engine
-	mu     sync.Mutex
-	ln     net.Listener
+	mu      sync.Mutex
+	ln      net.Listener
 }
 
 func New(addr string, ctrl Controller) *Server {
@@ -75,20 +78,21 @@ func (s *Server) handle(conn net.Conn) {
 	enc := json.NewEncoder(conn)
 	for {
 		var req struct {
-			Method string `json:"method"`
-			Index  int    `json:"index"`
+			Method  string `json:"method"`
+			Index   int    `json:"index"`
+			Enabled bool   `json:"enabled"`
 		}
 		if err := dec.Decode(&req); err != nil {
 			return
 		}
-		resp := s.dispatch(req.Method, req.Index)
+		resp := s.dispatch(req.Method, req.Index, req.Enabled)
 		if err := enc.Encode(resp); err != nil {
 			return
 		}
 	}
 }
 
-func (s *Server) dispatch(method string, seekIndex int) map[string]interface{} {
+func (s *Server) dispatch(method string, seekIndex int, enabled bool) map[string]interface{} {
 	events := s.ctrl.Events()
 	var idx int
 	switch method {
@@ -102,6 +106,12 @@ func (s *Server) dispatch(method string, seekIndex int) map[string]interface{} {
 		idx = s.ctrl.Cursor()
 	case "RunToEvent":
 		idx = s.runToIOEvent(s.ctrl.Cursor())
+	case "SetBreakpoint":
+		s.ctrl.SetBreakpoint(seekIndex, enabled)
+		idx = s.ctrl.Cursor()
+	case "ClearBreakpoints":
+		s.ctrl.ClearBreakpoints()
+		idx = s.ctrl.Cursor()
 	default:
 		idx = s.ctrl.Cursor()
 	}
@@ -119,6 +129,9 @@ func (s *Server) dispatch(method string, seekIndex int) map[string]interface{} {
 	if evt != nil {
 		resp["timestamp_ns"] = evt.TimestampNs
 	}
+	if reason := s.ctrl.StoppedReason(idx); reason != "" {
+		resp["stopped_reason"] = reason
+	}
 	if s.timeEng != nil {
 		resp["clock_index"] = s.timeEng.ClockIndex(idx)
 		resp["frozen_timestamp_ns"] = s.timeEng.FrozenTimestampNs()
@@ -129,6 +142,9 @@ func (s *Server) dispatch(method string, seekIndex int) map[string]interface{} {
 func (s *Server) runToIOEvent(start int) int {
 	events := s.ctrl.Events()
 	for i := start + 1; i < len(events); i++ {
+		if s.ctrl.StoppedReason(i) == "breakpoint" {
+			return s.ctrl.Seek(i)
+		}
 		evt := events[i]
 		if evt.IsWrite <= 1 {
 			return s.ctrl.Seek(i)

@@ -2,7 +2,7 @@
   "name": "bugit-dre",
   "displayName": "BugIT DRE Engine",
   "description": "Load and replay DRE snapshots in VS Code",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "publisher": "bugit",
   "engines": {
     "vscode": "^1.85.0"
@@ -10,8 +10,11 @@
   "categories": ["Debuggers"],
   "activationEvents": [
     "onCommand:bugit.loadSnapshot",
+    "onCommand:bugit.fetchLatest",
+    "onCommand:bugit.loadFromCollector",
     "onCommand:bugit.stepForward",
-    "onCommand:bugit.stepBackward"
+    "onCommand:bugit.stepBackward",
+    "onCommand:bugit.startReplayDebug"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -33,6 +36,11 @@
           "default": "",
           "description": "Path to replay.yaml (defaults to deploy/replay.yaml)"
         },
+        "bugit.collectorUrl": {
+          "type": "string",
+          "default": "http://localhost:8080",
+          "description": "DRE collector HTTP base URL for fetch/list"
+        },
         "bugit.delveAddr": {
           "type": "string",
           "default": "127.0.0.1:2345",
@@ -45,6 +53,14 @@
         "command": "bugit.loadSnapshot",
         "title": "DRE: Load Snapshot",
         "icon": "$(debug-restart)"
+      },
+      {
+        "command": "bugit.fetchLatest",
+        "title": "DRE: Fetch Latest Snapshot"
+      },
+      {
+        "command": "bugit.loadFromCollector",
+        "title": "DRE: Load from Collector"
       },
       {
         "command": "bugit.stepForward",
@@ -61,8 +77,32 @@
         "title": "DRE: Attach Delve"
       },
       {
+        "command": "bugit.startReplayDebug",
+        "title": "DRE: Start Replay Debug Session"
+      },
+      {
         "command": "bugit.stopReplay",
         "title": "DRE: Stop Replay"
+      }
+    ],
+    "debuggers": [
+      {
+        "type": "bugit-dre",
+        "label": "DRE Replay",
+        "program": "./out/debugAdapter.js",
+        "runtime": "node",
+        "configurationAttributes": {
+          "launch": {
+            "required": [],
+            "properties": {
+              "debugAddr": {
+                "type": "string",
+                "default": "127.0.0.1:19090",
+                "description": "Replay debugger sync API address"
+              }
+            }
+          }
+        }
       }
     ],
     "keybindings": [
@@ -80,7 +120,13 @@
   },
   "scripts": {
     "compile": "tsc -p .",
-    "watch": "tsc -watch -p ."
+    "watch": "tsc -watch -p .",
+    "postinstall": "node -e \"const fs=require('fs');const p='node_modules/mermaid/dist/mermaid.min.js';if(fs.existsSync(p)){fs.mkdirSync('media',{recursive:true});fs.copyFileSync(p,'media/mermaid.min.js');}\""
+  },
+  "dependencies": {
+    "@vscode/debugadapter": "^1.65.0",
+    "@vscode/debugprotocol": "^1.65.0",
+    "mermaid": "^10.9.0"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",

@@ -26,8 +26,9 @@ type Session struct {
 	binary        string
 	delveAddr     string
 
-	mu     sync.Mutex
-	cursor int
+	mu          sync.Mutex
+	cursor      int
+	breakpoints map[int]bool
 
 	proxySrv *proxy.MultiServer
 	dbg      *debugger.Server
@@ -53,6 +54,7 @@ func New(snap *archive.Snapshot, cfg config.ReplayConfig, opts Options) *Session
 		proxyOverride: opts.ProxyAddrOverride,
 		binary:        opts.Binary,
 		delveAddr:     opts.DelveAddr,
+		breakpoints:   make(map[int]bool),
 	}
 }
 
@@ -82,6 +84,34 @@ func (s *Session) Step(delta int) int {
 
 func (s *Session) Events() []ioevent.IOEvent {
 	return s.Snap.Events
+}
+
+func (s *Session) SetBreakpoint(index int, enabled bool) {
+	s.mu.Lock()
+	if s.breakpoints == nil {
+		s.breakpoints = make(map[int]bool)
+	}
+	if enabled {
+		s.breakpoints[index] = true
+	} else {
+		delete(s.breakpoints, index)
+	}
+	s.mu.Unlock()
+}
+
+func (s *Session) ClearBreakpoints() {
+	s.mu.Lock()
+	s.breakpoints = make(map[int]bool)
+	s.mu.Unlock()
+}
+
+func (s *Session) StoppedReason(idx int) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.breakpoints[idx] {
+		return "breakpoint"
+	}
+	return ""
 }
 
 func (s *Session) onCursorChange() {
@@ -123,10 +153,9 @@ func (s *Session) Start(ctx context.Context) error {
 			s.dlv = delve.New()
 		}
 		if err := s.dlv.StartHeadless(s.binary, s.delveAddr); err != nil {
-			log.Printf("delve: %v", err)
-		} else {
-			log.Printf("delve headless on %s", s.delveAddr)
+			return fmt.Errorf("delve: %w", err)
 		}
+		log.Printf("delve headless on %s (ready)", s.delveAddr)
 	}
 
 	log.Printf("replay session ready: manifest=%s events=%d proxy=%s debug=%s",

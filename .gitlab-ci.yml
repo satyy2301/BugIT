@@ -40,6 +40,12 @@ test:
     - go test ./...
     - go test -v ./dre-replay-cli/...
 
+test:vscode:
+  stage: test
+  image: node:20-bookworm
+  script:
+    - cd extensions/vscode && npm ci && npm run compile && node out/collector.test.js
+
 docker:
   stage: docker
   image: docker:27
@@ -62,6 +68,14 @@ integration:
     - go test -v ./dre-collector/internal/server/...
     - go build -o bin/dre-replay ./dre-replay-cli/cmd/dre-replay
     - bash test/integration/replay_e2e.sh
+  rules:
+    - when: manual
+
+jetbrains:compile:
+  stage: integration
+  image: gradle:8.5-jdk17
+  script:
+    - cd extensions/jetbrains && gradle buildPlugin --no-daemon
   rules:
     - when: manual
 

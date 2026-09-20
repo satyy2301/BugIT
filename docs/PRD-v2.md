@@ -1,6 +1,6 @@
 # BugIT DRE-Engine — PRD v2.0 (Post-Prototype)
 
-**Status:** Phase 1 complete, Phase 2 complete, Phase 3 complete  
+**Status:** Phase 1 complete, Phase 2 complete, Phase 3 complete, Phase 4 complete  
 **Target:** Q1 2027 beta
 
 ## Phase 1 — Real capture
@@ -45,6 +45,27 @@
 
 **Verify:** `go test ./dre-replay-cli/...`, `bash test/integration/replay_e2e.sh`, and `dre-replay run --config deploy/replay.yaml --dre test/fixtures/demo-checkout-500.dre`
 
+## Phase 4 — IDE polish + DAP + JetBrains
+
+| Req ID | Requirement | Status |
+|--------|-------------|--------|
+| REQ-IDE-001 | Remote collector snapshot load | Done — `DRE: Fetch Latest` / `Load from Collector` |
+| REQ-IDE-002 | Timeline v2 + Mermaid service graph | Done — click payload, service grouping, vector graph |
+| REQ-IDE-003 | Event-index DAP debugging | Done — `bugit-dre` debug adapter + replay breakpoints |
+| REQ-IDE-004 | JetBrains load stub | Done — `extensions/jetbrains` tool window |
+
+**Acceptance checklist**
+
+- [x] Collector fetch downloads `.dre` and loads timeline (`bugit.fetchLatest`)
+- [x] Mermaid graph renders from `vector_graph.edges`
+- [x] Click event row shows payload detail (up to 2KB per event)
+- [x] `SetBreakpoint` stops stepping at event index (`TestDebuggerBreakpointOnStep`)
+- [x] VS Code **DRE: Start Replay Debug Session** launches `bugit-dre` adapter
+- [x] Delve readiness poll on `dre-replay run --binary`
+- [x] JetBrains plugin loads snapshot into tool window
+
+**Verify:** `go test ./dre-replay-cli/...`, `cd extensions/vscode && npm run compile`, JetBrains `buildPlugin`
+
 ## Later phases
 
-Phase 4+: cloud beta NFRs, full DAP breakpoint sync, JetBrains IDE.
+Phase 5: cloud beta NFRs (EKS/GKE, Grafana, SOC2 runbooks), full Go source-line ↔ event-index Delve sync.

@@ -1,14 +1,17 @@
 import * as vscode from 'vscode';
 import { spawn, ChildProcess } from 'child_process';
 import * as fs from 'fs';
-import * as net from 'net';
 import * as path from 'path';
+import { downloadSnapshot, listSnapshots, pickLatest } from './collector';
+import { debuggerRequest, isDebuggerReachable, parseDebugAddr } from './replayClient';
 
 let panel: vscode.WebviewPanel | undefined;
 let currentPayload: IDELoadResponse | undefined;
 let highlightedIndex = 0;
+let selectedEventIndex = 0;
 let replayProcess: ChildProcess | undefined;
 let drePath: string | undefined;
+let extensionContext: vscode.ExtensionContext;
 
 interface EventSummary {
   index: number;
@@ -16,6 +19,7 @@ interface EventSummary {
   direction: string;
   summary: string;
   payload_preview: string;
+  payload?: string;
   is_error: boolean;
   timestamp_ns: number;
 }
@@ -52,18 +56,31 @@ interface IDELoadResponse {
     proxy_addr: string;
     debug_addr: string;
     delve_addr?: string;
+    delve_ready?: boolean;
     status: string;
     config_path?: string;
   };
 }
 
 export function activate(context: vscode.ExtensionContext) {
+  extensionContext = context;
   context.subscriptions.push(
     vscode.commands.registerCommand('bugit.loadSnapshot', loadSnapshot),
+    vscode.commands.registerCommand('bugit.fetchLatest', fetchLatest),
+    vscode.commands.registerCommand('bugit.loadFromCollector', loadFromCollector),
     vscode.commands.registerCommand('bugit.stepForward', () => debuggerCall('StepForward')),
     vscode.commands.registerCommand('bugit.stepBackward', () => debuggerCall('StepBackward')),
     vscode.commands.registerCommand('bugit.attachDelve', attachDelve),
-    vscode.commands.registerCommand('bugit.stopReplay', stopReplay)
+    vscode.commands.registerCommand('bugit.startReplayDebug', startReplayDebug),
+    vscode.commands.registerCommand('bugit.stopReplay', stopReplay),
+    vscode.debug.registerDebugConfigurationProvider('bugit-dre', {
+      resolveDebugConfiguration: () => ({
+        type: 'bugit-dre',
+        request: 'launch',
+        name: 'DRE Replay',
+        debugAddr: currentPayload?.replay?.debug_addr ?? '127.0.0.1:19090',
+      }),
+    }),
   );
 }
 
@@ -125,6 +142,15 @@ function resolveConfigPath(): string {
   return '';
 }
 
+function collectorUrl(): string {
+  return vscode.workspace.getConfiguration('bugit').get<string>('collectorUrl', 'http://localhost:8080');
+}
+
+function latestDrePath(): string {
+  const root = resolveRepoRoot() ?? vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '';
+  return path.join(root, 'latest.dre');
+}
+
 async function loadSnapshot() {
   const folders = vscode.workspace.workspaceFolders;
   const defaultDir = folders?.[0]?.uri;
@@ -148,8 +174,55 @@ async function loadSnapshot() {
   if (!uris?.length) {
     return;
   }
+  await loadSnapshotFromPath(uris[0].fsPath);
+}
 
-  drePath = uris[0].fsPath;
+async function fetchLatest() {
+  const url = collectorUrl();
+  try {
+    const snaps = await listSnapshots(url);
+    const latest = pickLatest(snaps);
+    if (!latest) {
+      vscode.window.showWarningMessage(`No snapshots on collector ${url}`);
+      return;
+    }
+    const dest = latestDrePath();
+    await downloadSnapshot(url, latest, dest);
+    await loadSnapshotFromPath(dest);
+  } catch (err) {
+    vscode.window.showErrorMessage(`Fetch latest failed: ${err}`);
+  }
+}
+
+async function loadFromCollector() {
+  const url = collectorUrl();
+  try {
+    const snaps = await listSnapshots(url);
+    if (!snaps.length) {
+      vscode.window.showWarningMessage(`No snapshots on collector ${url}`);
+      return;
+    }
+    const pick = await vscode.window.showQuickPick(
+      snaps.map((s) => ({
+        label: s.id,
+        description: `${s.event_count ?? '?'} events · ${s.captured_at ?? 'unknown time'}`,
+        snap: s,
+      })),
+      { placeHolder: 'Select snapshot from collector' },
+    );
+    if (!pick) {
+      return;
+    }
+    const dest = path.join(path.dirname(latestDrePath()), `incident-${pick.snap.id}.dre`);
+    await downloadSnapshot(url, pick.snap, dest);
+    await loadSnapshotFromPath(dest);
+  } catch (err) {
+    vscode.window.showErrorMessage(`Load from collector failed: ${err}`);
+  }
+}
+
+async function loadSnapshotFromPath(filePath: string) {
+  drePath = filePath;
   const replayBin = resolveReplayBin();
   const key = vscode.workspace.getConfiguration('bugit').get<string>('snapshotKey', 'dev-insecure-key-change-me');
   const configPath = resolveConfigPath();
@@ -172,6 +245,7 @@ async function loadSnapshot() {
     try {
       currentPayload = JSON.parse(stdout) as IDELoadResponse;
       highlightedIndex = 0;
+      selectedEventIndex = 0;
       await startReplay(replayBin, drePath!, key, configPath, currentPayload.replay?.debug_addr);
       renderPanel();
       const title = currentPayload.manifest.incident?.title ?? currentPayload.manifest.id;
@@ -208,17 +282,6 @@ async function startReplay(
   });
 }
 
-async function isDebuggerReachable(debugAddr: string): Promise<boolean> {
-  const [host, portStr] = debugAddr.includes(':') ? debugAddr.split(':') : ['127.0.0.1', '19090'];
-  const port = parseInt(portStr, 10);
-  try {
-    await debuggerRequest(host, port, { method: 'GetState' });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 function stopReplay() {
   if (replayProcess) {
     replayProcess.kill();
@@ -226,11 +289,28 @@ function stopReplay() {
   }
 }
 
+async function startReplayDebug() {
+  if (!currentPayload) {
+    vscode.window.showWarningMessage('Load a snapshot first');
+    return;
+  }
+  const folder = vscode.workspace.workspaceFolders?.[0];
+  const started = await vscode.debug.startDebugging(folder, {
+    type: 'bugit-dre',
+    request: 'launch',
+    name: 'DRE Replay',
+    debugAddr: currentPayload.replay?.debug_addr ?? '127.0.0.1:19090',
+  });
+  if (!started) {
+    vscode.window.showErrorMessage('Failed to start DRE replay debug session');
+  }
+}
+
 async function attachDelve() {
   const goExtension = vscode.extensions.getExtension('golang.go');
   if (!goExtension) {
     const choice = await vscode.window.showWarningMessage(
-      'Go extension (golang.go) is required for Delve attach. Install it or use Run and Debug → "DRE: Attach Delve".',
+      'Go extension (golang.go) is required for Delve attach.',
       'Open Extensions',
     );
     if (choice === 'Open Extensions') {
@@ -255,15 +335,64 @@ async function attachDelve() {
   });
   if (!started) {
     void vscode.window.showErrorMessage(
-      `Failed to start Delve attach. Ensure dlv is listening on ${addr} (dre-replay run --binary ./your-app).`,
+      `Failed to start Delve attach. Ensure dlv is listening on ${addr}.`,
     );
   }
+}
+
+function buildMermaidSource(edges: Array<{ from: string; to: string }>): string {
+  if (!edges.length) {
+    return 'flowchart LR\n  empty[No edges]';
+  }
+  const lines = ['flowchart LR'];
+  const nodes = new Set<string>();
+  for (const e of edges) {
+    nodes.add(e.from);
+    nodes.add(e.to);
+    const from = e.from.replace(/[^a-zA-Z0-9_]/g, '_');
+    const to = e.to.replace(/[^a-zA-Z0-9_]/g, '_');
+    lines.push(`  ${from}["${e.from}"] --> ${to}["${e.to}"]`);
+  }
+  return lines.join('\n');
+}
+
+function groupEventsByService(events: EventSummary[]): Map<string, EventSummary[]> {
+  const groups = new Map<string, EventSummary[]>();
+  for (const e of events) {
+    const list = groups.get(e.service) ?? [];
+    list.push(e);
+    groups.set(e.service, list);
+  }
+  return groups;
+}
+
+function buildEventFlowHtml(events: EventSummary[], cursor: number): string {
+  if (!events.length) {
+    return '<span class="flow-step muted">No events</span>';
+  }
+  return events
+    .map((e) => {
+      const past = e.index < cursor ? 'past' : '';
+      const current = e.index === cursor ? 'current' : '';
+      const err = e.is_error ? 'error' : '';
+      return `<span class="flow-step ${past} ${current} ${err}" title="Event ${e.index + 1}">${esc(e.service)}: ${esc(e.summary)}</span>`;
+    })
+    .join('<span class="flow-arrow">→</span>');
+}
+
+function currentEventBar(events: EventSummary[], cursor: number, total: number): string {
+  const ev = events.find((e) => e.index === cursor);
+  if (!ev) {
+    return `Event ${cursor + 1} of ${total}`;
+  }
+  return `Event ${cursor + 1} of ${total} · ${ev.service} · ${ev.summary}`;
 }
 
 function renderPanel() {
   if (!currentPayload) {
     return;
   }
+
   const p = currentPayload;
   const incident = p.manifest.incident;
   const trigger = p.manifest.trigger;
@@ -271,13 +400,18 @@ function renderPanel() {
   const replay = p.replay;
   const clockEntries = p.clock_timeline?.entries ?? [];
   const graph = p.vector_graph;
+  const edges = graph?.edges ?? [];
+  const mermaidSrc = buildMermaidSource(edges);
+  const cursorEvent = events.find((e) => e.index === highlightedIndex);
+  const payloadDetail = cursorEvent?.payload ?? cursorEvent?.payload_preview ?? '(select an event)';
+  const eventFlowHtml = buildEventFlowHtml(events, highlightedIndex);
+  const currentBar = currentEventBar(events, highlightedIndex, p.event_count ?? events.length);
 
-  if (panel) {
-    panel.reveal();
-  } else {
+  if (!panel) {
     panel = vscode.window.createWebviewPanel('bugitTimeline', 'DRE Replay', vscode.ViewColumn.Beside, {
       enableScripts: true,
       retainContextWhenHidden: true,
+      localResourceRoots: [vscode.Uri.joinPath(extensionContext.extensionUri, 'media')],
     });
     panel.onDidDispose(() => {
       stopReplay();
@@ -286,35 +420,35 @@ function renderPanel() {
     panel.webview.onDidReceiveMessage(async (msg) => {
       if (msg.type === 'step') {
         await debuggerCall(msg.method, msg.index);
+      } else if (msg.type === 'toggleBp') {
+        await toggleBreakpoint(msg.index);
       } else if (msg.type === 'stop') {
         stopReplay();
         renderPanel();
       }
     });
+  } else {
+    panel.reveal();
   }
 
-  const eventRows = events
-    .map((e) => {
-      const cls = e.is_error ? 'error-row' : e.index === highlightedIndex ? 'active-row' : '';
-      return `<tr class="${cls}" data-index="${e.index}">
-        <td>${e.index + 1}</td>
-        <td>${esc(e.service)}</td>
-        <td>${esc(e.direction)}</td>
-        <td>${esc(e.summary)}</td>
-        <td class="preview">${esc(e.payload_preview)}</td>
-      </tr>`;
-    })
+  const flatRows = events
+    .map((e) => eventRowHtml(e, true))
     .join('');
 
-  const graphRows = (graph?.edges ?? [])
-    .map((e) => `<tr><td>${esc(e.from)}</td><td>→</td><td>${esc(e.to)}</td></tr>`)
+  const serviceGroups = groupEventsByService(events);
+  const groupedRows = [...serviceGroups.entries()]
+    .map(([svc, evts]) => {
+      const rows = evts.map((e) => eventRowHtml(e, false)).join('');
+      return `<details><summary><strong>${esc(svc)}</strong> (${evts.length})</summary><table>
+        <tr><th>#</th><th>Dir</th><th>Summary</th><th>BP</th></tr>${rows}</table></details>`;
+    })
     .join('');
 
   const clockRows = clockEntries
     .map((c) => {
       const cls = c.index === highlightedIndex ? 'active-row' : '';
       return `<tr class="${cls}"><td>${c.index + 1}</td><td>${c.timestamp_ns}</td>
-        <td><button type="button" class="seek-btn" data-action="seek" data-index="${c.index}">Seek</button></td></tr>`;
+        <td><button type="button" data-action="seek" data-index="${c.index}">Seek</button></td></tr>`;
     })
     .join('');
 
@@ -322,11 +456,14 @@ function renderPanel() {
   const triggerBadge = trigger.type === 'http_5xx' ? 'auto-detected' : trigger.type;
   const replayStatus = replayProcess ? 'running (extension)' : (replay?.status ?? 'external or stopped');
   const nonce = getNonce();
+  const mermaidUri = panel.webview.asWebviewUri(
+    vscode.Uri.joinPath(extensionContext.extensionUri, 'media', 'mermaid.min.js'),
+  );
 
   panel.webview.html = `<!DOCTYPE html>
 <html>
 <head>
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}';">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}' ${mermaidUri};">
   <style>
     body { font-family: -apple-system, sans-serif; padding: 16px; color: #ccc; background: #1e1e1e; line-height: 1.5; }
     .banner { background: #3d1f1f; border: 1px solid #c44; border-radius: 8px; padding: 16px; margin-bottom: 16px; }
@@ -334,18 +471,34 @@ function renderPanel() {
     .controls { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
     button { background: #0e639c; color: #fff; border: none; padding: 8px 14px; border-radius: 4px; cursor: pointer; }
     button.secondary { background: #444; }
+    button.bp { background: #8b4513; padding: 4px 8px; font-size: 11px; }
     .meta { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
     .badge { background: #333; padding: 4px 10px; border-radius: 4px; font-size: 12px; }
     .badge.auto { background: #5a2d2d; color: #f88; }
     .flow { background: #252526; padding: 12px; border-radius: 6px; font-size: 13px; margin-bottom: 16px; }
     .replay { background: #1a2d1a; border: 1px solid #3a5a3a; padding: 12px; border-radius: 6px; margin-bottom: 16px; }
-    table { border-collapse: collapse; width: 100%; font-size: 13px; margin-bottom: 16px; }
+    .current-event { background: #2d3a4a; border: 1px solid #569cd6; padding: 10px 14px; border-radius: 6px; margin-bottom: 12px; font-size: 14px; font-weight: 500; }
+    .timeline-scroll { max-height: 280px; overflow-y: auto; margin-bottom: 16px; border: 1px solid #444; border-radius: 6px; }
+    .payload-detail { background: #252526; border: 1px solid #444; padding: 12px; border-radius: 6px; font-family: monospace; font-size: 11px; white-space: pre-wrap; max-height: 200px; overflow: auto; margin-bottom: 16px; }
+    .event-flow { background: #252526; padding: 12px; border-radius: 6px; margin-bottom: 16px; overflow-x: auto; display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+    .flow-step { background: #333; border: 1px solid #555; padding: 6px 10px; border-radius: 4px; font-size: 11px; white-space: nowrap; opacity: 0.45; }
+    .flow-step.past { opacity: 0.75; border-color: #666; }
+    .flow-step.current { opacity: 1; border: 2px solid #569cd6; background: #2d3a4a; font-weight: 600; }
+    .flow-step.error { border-color: #c44; }
+    .flow-step.muted { opacity: 0.6; }
+    .flow-arrow { color: #888; margin: 0 2px; }
+    .mermaid-wrap { background: #252526; padding: 12px; border-radius: 6px; margin-bottom: 16px; overflow-x: auto; }
+    table { border-collapse: collapse; width: 100%; font-size: 13px; margin-bottom: 0; }
+    .timeline-scroll table { margin-bottom: 0; }
     th, td { border: 1px solid #444; padding: 8px; text-align: left; vertical-align: top; }
     th { background: #2d2d2d; }
     .preview { font-family: monospace; font-size: 11px; color: #aaa; max-width: 280px; }
     .error-row { background: #3d2020; }
     .active-row { outline: 2px solid #569cd6; }
+    .selectable-row { cursor: pointer; }
+    .selectable-row:hover { background: #2a2a2a; }
     h3 { margin-top: 20px; color: #9cdcfe; }
+    details { margin-bottom: 12px; }
   </style>
 </head>
 <body>
@@ -370,22 +523,39 @@ function renderPanel() {
     <span class="badge">${esc(replayStatus)}</span><br>
     <strong>Debugger:</strong> ${esc(replay?.debug_addr ?? '127.0.0.1:19090')}<br>
     <strong>Delve:</strong> ${esc(replay?.delve_addr ?? '127.0.0.1:2345')}
+    ${replay?.delve_ready ? '<span class="badge">delve ready</span>' : ''}
   </div>
-  <h3>Cross-service flow</h3>
-  <div class="flow">${esc(p.flow ?? '—')}</div>
-  <h3>Vector graph</h3>
-  <table><tr><th>From</th><th></th><th>To</th></tr>${graphRows || '<tr><td colspan="3">No edges</td></tr>'}</table>
-  <h3>Clock timeline</h3>
-  <table><tr><th>Event #</th><th>Timestamp (ns)</th><th></th></tr>${clockRows || '<tr><td colspan="3">No clock entries</td></tr>'}</table>
+  <div class="current-event">${esc(currentBar)}</div>
   <h3>Event timeline</h3>
-  <table>
-    <tr><th>#</th><th>Service</th><th>Dir</th><th>Summary</th><th>Payload</th></tr>
-    ${eventRows || '<tr><td colspan="5">No events</td></tr>'}
-  </table>
+  <div class="timeline-scroll" id="timeline-scroll">
+    <table>
+      <tr><th>#</th><th>Service</th><th>Dir</th><th>Summary</th><th>Payload</th><th>BP</th></tr>
+      ${flatRows || '<tr><td colspan="6">No events</td></tr>'}
+    </table>
+  </div>
+  <h3>Payload detail (event ${highlightedIndex + 1})</h3>
+  <div class="payload-detail">${esc(payloadDetail)}</div>
+  <h3>Service flow (cursor)</h3>
+  <div class="event-flow">${eventFlowHtml}</div>
+  <details>
+    <summary><h3 style="display:inline;margin:0">Vector clock graph</h3></summary>
+    <div class="mermaid-wrap"><pre class="mermaid">${esc(mermaidSrc)}</pre></div>
+  </details>
+  <details>
+    <summary><h3 style="display:inline;margin:0">Events by service</h3></summary>
+    ${groupedRows || '<p>No events</p>'}
+  </details>
+  <details>
+    <summary><h3 style="display:inline;margin:0">Clock timeline &amp; cross-service flow</h3></summary>
+    <table><tr><th>Event #</th><th>Timestamp (ns)</th><th></th></tr>${clockRows || '<tr><td colspan="3">No clock entries</td></tr>'}</table>
+    <div class="flow">${esc(p.flow ?? '—')}</div>
+  </details>
+  <script nonce="${nonce}" src="${mermaidUri}"></script>
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
     document.querySelectorAll('[data-action]').forEach((el) => {
-      el.addEventListener('click', () => {
+      el.addEventListener('click', (ev) => {
+        ev.stopPropagation();
         const action = el.getAttribute('data-action');
         if (action === 'step') {
           vscode.postMessage({ type: 'step', method: el.getAttribute('data-method') });
@@ -394,12 +564,61 @@ function renderPanel() {
           vscode.postMessage({ type: 'step', method: 'Seek', index });
         } else if (action === 'stop') {
           vscode.postMessage({ type: 'stop' });
+        } else if (action === 'toggleBp') {
+          const index = parseInt(el.getAttribute('data-index') ?? '0', 10);
+          vscode.postMessage({ type: 'toggleBp', index });
         }
       });
     });
+    document.querySelectorAll('[data-select-index]').forEach((row) => {
+      row.addEventListener('click', (ev) => {
+        if (ev.target.closest('button')) return;
+        const index = parseInt(row.getAttribute('data-select-index') ?? '0', 10);
+        vscode.postMessage({ type: 'step', method: 'Seek', index });
+      });
+    });
+    if (typeof mermaid !== 'undefined') {
+      mermaid.initialize({ startOnLoad: false, theme: 'dark' });
+      mermaid.run({ nodes: document.querySelectorAll('.mermaid') });
+    }
+    const active = document.getElementById('event-row-${highlightedIndex}') || document.querySelector('.active-row');
+    if (active) active.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   </script>
 </body>
 </html>`;
+}
+
+function eventRowHtml(e: EventSummary, includeService: boolean): string {
+  const cls = [
+    e.is_error ? 'error-row' : '',
+    e.index === highlightedIndex ? 'active-row' : '',
+    'selectable-row',
+  ]
+    .filter(Boolean)
+    .join(' ');
+  const svcCol = includeService ? `<td>${esc(e.service)}</td>` : '';
+  return `<tr id="event-row-${e.index}" class="${cls}" data-select-index="${e.index}">
+    <td>${e.index + 1}</td>
+    ${svcCol}
+    <td>${esc(e.direction)}</td>
+    <td>${esc(e.summary)}</td>
+    ${includeService ? `<td class="preview">${esc(e.payload_preview)}</td>` : ''}
+    <td><button type="button" class="bp" data-action="toggleBp" data-index="${e.index}">BP</button></td>
+  </tr>`;
+}
+
+async function toggleBreakpoint(index: number) {
+  if (!currentPayload) {
+    return;
+  }
+  const addr = currentPayload.replay?.debug_addr ?? '127.0.0.1:19090';
+  const { host, port } = parseDebugAddr(addr);
+  try {
+    await debuggerRequest(host, port, { method: 'SetBreakpoint', index, enabled: true });
+    vscode.window.showInformationMessage(`Breakpoint set at event ${index + 1}`);
+  } catch (err) {
+    vscode.window.showWarningMessage(`Breakpoint failed: ${err}`);
+  }
 }
 
 function getNonce(): string {
@@ -425,8 +644,7 @@ async function debuggerCall(method: string, seekIndex?: number) {
     return;
   }
   const addr = currentPayload.replay?.debug_addr ?? '127.0.0.1:19090';
-  const [host, portStr] = addr.includes(':') ? addr.split(':') : ['127.0.0.1', '19090'];
-  const port = parseInt(portStr, 10);
+  const { host, port } = parseDebugAddr(addr);
 
   try {
     const body: Record<string, unknown> = { method };
@@ -437,6 +655,7 @@ async function debuggerCall(method: string, seekIndex?: number) {
     const idx = Number(resp.index);
     if (!Number.isNaN(idx)) {
       highlightedIndex = idx;
+      selectedEventIndex = idx;
       renderPanel();
     }
   } catch (err) {
@@ -445,45 +664,10 @@ async function debuggerCall(method: string, seekIndex?: number) {
       vscode.window.showWarningMessage(
         `Debugger not reachable on ${addr}. Start replay with dre-replay run or DRE: Load Snapshot.`,
       );
-    } else if (msg === 'invalid debugger response') {
-      vscode.window.showWarningMessage(`Debugger returned invalid JSON on ${addr}.`);
     } else {
-      vscode.window.showWarningMessage(`Debugger error (${msg}). Is replay running on ${addr}?`);
+      vscode.window.showWarningMessage(`Debugger error (${msg}).`);
     }
   }
-}
-
-function debuggerRequest(host: string, port: number, body: Record<string, unknown>): Promise<{ index?: number; total?: number }> {
-  return new Promise((resolve, reject) => {
-    const sock = net.createConnection({ host, port }, () => {
-      sock.write(JSON.stringify(body) + '\n');
-    });
-    let data = '';
-    let settled = false;
-    const finish = (err?: Error, result?: { index?: number; total?: number }) => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      clearTimeout(timer);
-      sock.destroy();
-      if (err) {
-        reject(err);
-      } else {
-        resolve(result!);
-      }
-    };
-    sock.on('data', (chunk) => {
-      data += chunk.toString();
-      try {
-        finish(undefined, JSON.parse(data.trim()) as { index?: number; total?: number });
-      } catch {
-        // incomplete JSON; wait for more data
-      }
-    });
-    sock.on('error', (err) => finish(err));
-    const timer = setTimeout(() => finish(new Error('timeout')), 2000);
-  });
 }
 
 export function deactivate() {
