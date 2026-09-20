@@ -13,6 +13,21 @@
   ],
   "main": "./out/extension.js",
   "contributes": {
+    "configuration": {
+      "title": "BugIT DRE",
+      "properties": {
+        "bugit.replayBin": {
+          "type": "string",
+          "default": "",
+          "description": "Path to dre-replay binary (auto-detected from workspace bin/ if empty)"
+        },
+        "bugit.snapshotKey": {
+          "type": "string",
+          "default": "dev-insecure-key-change-me",
+          "description": "AES key for decrypting .dre snapshots"
+        }
+      }
+    },
     "commands": [
       {
         "command": "bugit.loadSnapshot",

@@ -34,6 +34,7 @@ func runLoad(args []string) {
 	fs := flag.NewFlagSet("load", flag.ExitOnError)
 	path := fs.String("dre", "", "path to .dre snapshot")
 	key := fs.String("key", "dev-insecure-key-change-me", "AES key")
+	format := fs.String("format", "manifest", "output format: manifest or ide")
 	_ = fs.Parse(args)
 
 	snap, err := archive.Open(*path, *key)
@@ -42,6 +43,15 @@ func runLoad(args []string) {
 	}
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
+	if *format == "ide" {
+		_ = enc.Encode(map[string]interface{}{
+			"manifest":      snap.Manifest,
+			"vector_graph":  snap.VectorGraph,
+			"event_count":   len(snap.Events),
+			"vector_nodes":  len(snap.VectorGraph.Nodes),
+		})
+		return
+	}
 	_ = enc.Encode(snap.Manifest)
 	fmt.Fprintf(os.Stderr, "events=%d vector_nodes=%d\n",
 		len(snap.Events), len(snap.VectorGraph.Nodes))
