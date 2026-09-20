@@ -18,10 +18,11 @@ import (
 )
 
 type Snapshot struct {
-	Manifest     manifest.Manifest
-	Events       []ioevent.IOEvent
-	VectorGraph  manifest.VectorGraph
-	RedactionLog manifest.RedactionLog
+	Manifest      manifest.Manifest
+	Events        []ioevent.IOEvent
+	VectorGraph   manifest.VectorGraph
+	RedactionLog  manifest.RedactionLog
+	ClockTimeline manifest.ClockTimeline
 }
 
 func Encrypt(plain []byte, key string) ([]byte, error) {
@@ -60,7 +61,7 @@ func Decrypt(data []byte, key string) ([]byte, error) {
 	return gcm.Open(nil, nonce, ciphertext, nil)
 }
 
-func PackTarGz(m manifest.Manifest, events []byte, graph manifest.VectorGraph, redact manifest.RedactionLog) ([]byte, error) {
+func PackTarGz(m manifest.Manifest, events []byte, graph manifest.VectorGraph, redact manifest.RedactionLog, clock manifest.ClockTimeline) ([]byte, error) {
 	var buf bytes.Buffer
 	gz := gzip.NewWriter(&buf)
 	tw := tar.NewWriter(gz)
@@ -87,6 +88,10 @@ func PackTarGz(m manifest.Manifest, events []byte, graph manifest.VectorGraph, r
 	}
 	rb, _ := json.MarshalIndent(redact, "", "  ")
 	if err := writeFile("redaction_log.json", rb); err != nil {
+		return nil, err
+	}
+	cb, _ := json.MarshalIndent(clock, "", "  ")
+	if err := writeFile("clock_timeline.json", cb); err != nil {
 		return nil, err
 	}
 	if err := tw.Close(); err != nil {
@@ -131,6 +136,9 @@ func ParseTarGz(data []byte) (*Snapshot, error) {
 	}
 	if err := json.Unmarshal(files["redaction_log.json"], &snap.RedactionLog); err != nil {
 		return nil, err
+	}
+	if b, ok := files["clock_timeline.json"]; ok {
+		_ = json.Unmarshal(b, &snap.ClockTimeline)
 	}
 	eventsReader := bytes.NewReader(files["events.bin"])
 	for {

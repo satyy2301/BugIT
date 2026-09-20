@@ -42,27 +42,35 @@ func (s *Server) Start() error {
 
 func (s *Server) handle(conn net.Conn) {
 	defer conn.Close()
-	buf := make([]byte, 4096)
-	n, err := conn.Read(buf)
-	if err != nil || n == 0 {
-		return
+	buf := make([]byte, 8192)
+	for {
+		n, err := conn.Read(buf)
+		if err != nil || n == 0 {
+			return
+		}
+		request := append([]byte(nil), buf[:n]...)
+		resp := s.matchResponse(request)
+		if resp == nil {
+			log.Printf("replay proxy: no match for %q", firstLine(request))
+			return
+		}
+		_, _ = conn.Write(resp)
+		if !isHTTPKeepAlive(request) {
+			return
+		}
 	}
-	request := buf[:n]
+}
 
-	resp := s.matchResponse(request)
-	if resp == nil {
-		log.Printf("replay proxy: no match for %q", firstLine(request))
-		return
-	}
-	_, _ = conn.Write(resp)
-	_, _ = io.Copy(io.Discard, conn)
+func isHTTPKeepAlive(request []byte) bool {
+	return bytes.Contains(bytes.ToLower(request), []byte("connection: keep-alive"))
 }
 
 func (s *Server) matchResponse(request []byte) []byte {
-	reqKey := httpRequestKey(request)
+	reqKey := requestKey(request)
 	if reqKey == "" {
 		return s.fallbackSequential()
 	}
+	reqHost := httpHost(request)
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -71,7 +79,11 @@ func (s *Server) matchResponse(request []byte) []byte {
 		if evt.IsWrite != 0 {
 			continue
 		}
-		if httpRequestKey(evt.Payload[:evt.PayloadLen]) != reqKey {
+		payload := evt.Payload[:evt.PayloadLen]
+		if requestKey(payload) != reqKey {
+			continue
+		}
+		if reqHost != "" && httpHost(payload) != "" && httpHost(payload) != reqHost {
 			continue
 		}
 		for j := i + 1; j < len(s.events); j++ {
@@ -83,6 +95,13 @@ func (s *Server) matchResponse(request []byte) []byte {
 		}
 	}
 	return nil
+}
+
+func requestKey(payload []byte) string {
+	if k := grpcRequestKey(payload); k != "" {
+		return k
+	}
+	return httpRequestKey(payload)
 }
 
 func (s *Server) fallbackSequential() []byte {
@@ -98,6 +117,20 @@ func (s *Server) fallbackSequential() []byte {
 		}
 	}
 	return nil
+}
+
+func httpHost(payload []byte) string {
+	lower := bytes.ToLower(payload)
+	idx := bytes.Index(lower, []byte("host:"))
+	if idx < 0 {
+		return ""
+	}
+	rest := payload[idx+5:]
+	end := bytes.Index(rest, []byte("\r\n"))
+	if end < 0 {
+		end = len(rest)
+	}
+	return strings.TrimSpace(string(rest[:end]))
 }
 
 func httpRequestKey(payload []byte) string {

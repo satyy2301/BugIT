@@ -1,0 +1,14 @@
+proxy_addr: 127.0.0.1:18080
+debug_addr: 127.0.0.1:19090
+time_freeze:
+  enabled: true
+  shim_path: bin/clock_shim.so
+services:
+  - name: payment-service
+    local_port: 18081
+    remote_host: payment-service:443
+    protocol: http
+  - name: order-api
+    local_port: 18082
+    remote_host: order-api:8080
+    protocol: http

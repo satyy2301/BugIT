@@ -19,7 +19,7 @@ import (
 
 func TestSnapshotRoundTrip(t *testing.T) {
 	dir := t.TempDir()
-	collector := server.New(dir, "test-cluster", "ci-test-key")
+	collector := server.New(dir, "test-cluster", "ci-test-key", nil)
 
 	grpcLis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

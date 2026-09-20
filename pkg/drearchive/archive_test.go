@@ -19,7 +19,7 @@ func TestPackEncryptDecrypt(t *testing.T) {
 	copy(evt.Payload[:], []byte("ping"))
 	_ = evt.Encode(&buf)
 
-	tar, err := drearchive.PackTarGz(m, buf.Bytes(), manifest.VectorGraph{}, manifest.RedactionLog{})
+	tar, err := drearchive.PackTarGz(m, buf.Bytes(), manifest.VectorGraph{}, manifest.RedactionLog{}, manifest.ClockTimeline{})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -9,6 +9,7 @@ import (
 
 	"github.com/bugit/dre-engine/api/grpcapi"
 	"github.com/bugit/dre-engine/api/ioevent"
+	"github.com/bugit/dre-engine/pkg/vectorclock"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
@@ -18,10 +19,11 @@ type Client struct {
 	nodeID string
 	conn   *grpc.ClientConn
 	mu     sync.Mutex
+	vec    *vectorclock.Engine
 }
 
 func New(addr, nodeID string) *Client {
-	return &Client{addr: addr, nodeID: nodeID}
+	return &Client{addr: addr, nodeID: nodeID, vec: vectorclock.New()}
 }
 
 func (c *Client) Connect(ctx context.Context) error {
@@ -42,6 +44,20 @@ func (c *Client) Connect(ctx context.Context) error {
 	return nil
 }
 
+func (c *Client) injectVector(evt ioevent.IOEvent) ioevent.IOEvent {
+	if evt.IsWrite != 1 || evt.PayloadLen == 0 {
+		return evt
+	}
+	pl := evt.Payload[:evt.PayloadLen]
+	updated := vectorclock.MaybeInjectHTTP(pl, c.nodeID, c.vec)
+	if len(updated) == len(pl) {
+		return evt
+	}
+	evt.PayloadLen = uint32(len(updated))
+	copy(evt.Payload[:], updated)
+	return evt
+}
+
 func (c *Client) SendEvent(ctx context.Context, evt ioevent.IOEvent) error {
 	if c.conn == nil {
 		if err := c.Connect(ctx); err != nil {
@@ -53,6 +69,7 @@ func (c *Client) SendEvent(ctx context.Context, evt ioevent.IOEvent) error {
 	if err != nil {
 		return err
 	}
+	evt = c.injectVector(evt)
 	msg := grpcapi.IOEventFromNative(evt, c.nodeID)
 	if err := stream.Send(msg); err != nil {
 		return err
@@ -62,19 +79,40 @@ func (c *Client) SendEvent(ctx context.Context, evt ioevent.IOEvent) error {
 }
 
 func (c *Client) RunForwarder(ctx context.Context, events <-chan ioevent.IOEvent) {
+	if err := c.Connect(ctx); err != nil {
+		log.Printf("forward connect: %v", err)
+		return
+	}
+	client := grpcapi.NewEventIngestClient(c.conn)
+	for {
+		stream, err := client.StreamEvents(ctx)
+		if err != nil {
+			log.Printf("forward stream: %v", err)
+			time.Sleep(time.Second)
+			continue
+		}
+		if c.runStream(ctx, stream, events) {
+			return
+		}
+	}
+}
+
+func (c *Client) runStream(ctx context.Context, stream grpcapi.EventIngest_StreamEventsClient, events <-chan ioevent.IOEvent) bool {
 	for {
 		select {
 		case <-ctx.Done():
-			return
+			_, _ = stream.CloseAndRecv()
+			return true
 		case evt, ok := <-events:
 			if !ok {
-				return
+				_, _ = stream.CloseAndRecv()
+				return true
 			}
-			sendCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-			err := c.SendEvent(sendCtx, evt)
-			cancel()
-			if err != nil {
-				log.Printf("forward error: %v", err)
+			evt = c.injectVector(evt)
+			if err := stream.Send(grpcapi.IOEventFromNative(evt, c.nodeID)); err != nil {
+				log.Printf("forward send: %v", err)
+				_, _ = stream.CloseAndRecv()
+				return false
 			}
 		}
 	}

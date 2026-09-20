@@ -62,3 +62,12 @@ type RedactionEntry struct {
 type RedactionLog struct {
 	Entries []RedactionEntry `json:"entries"`
 }
+
+type ClockTimeline struct {
+	Entries []ClockEntry `json:"entries"`
+}
+
+type ClockEntry struct {
+	Index       int    `json:"index"`
+	TimestampNs uint64 `json:"timestamp_ns"`
+}

@@ -69,15 +69,19 @@ type TriggerSnapshotRequest struct {
 }
 
 type TriggerSnapshotResponse struct {
-	SnapshotID string `json:"snapshot_id"`
-	Path       string `json:"path"`
+	SnapshotID  string `json:"snapshot_id"`
+	Path        string `json:"path"`
+	StorageURI  string `json:"storage_uri,omitempty"`
+	DownloadURL string `json:"download_url,omitempty"`
 }
 
 type SnapshotInfo struct {
-	ID         string `json:"id"`
-	Path       string `json:"path"`
-	CapturedAt string `json:"captured_at"`
-	EventCount int64  `json:"event_count"`
+	ID          string `json:"id"`
+	Path        string `json:"path"`
+	StorageURI  string `json:"storage_uri,omitempty"`
+	DownloadURL string `json:"download_url,omitempty"`
+	CapturedAt  string `json:"captured_at"`
+	EventCount  int64  `json:"event_count"`
 }
 
 type ListSnapshotsResponse struct {

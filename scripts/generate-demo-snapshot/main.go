@@ -32,7 +32,7 @@ func main() {
 	}
 	m.Checksum = sha256Hex(eventsBuf.Bytes())
 
-	tarGz, err := drearchive.PackTarGz(m, eventsBuf.Bytes(), graph, redact)
+	tarGz, err := drearchive.PackTarGz(m, eventsBuf.Bytes(), graph, redact, manifest.ClockTimeline{})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

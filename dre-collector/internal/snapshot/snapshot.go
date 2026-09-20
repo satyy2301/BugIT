@@ -48,7 +48,8 @@ func (e *Exporter) Export(events []buffer.Event, graph manifest.VectorGraph, red
 	}
 	manifestObj.Checksum = sha256Hex(eventsBuf.Bytes())
 
-	tarGz, err := drearchive.PackTarGz(manifestObj, eventsBuf.Bytes(), graph, redact)
+	clock := buildClockTimeline(events)
+	tarGz, err := drearchive.PackTarGz(manifestObj, eventsBuf.Bytes(), graph, redact, clock)
 	if err != nil {
 		return manifest.Manifest{}, "", err
 	}
@@ -76,6 +77,20 @@ func uniqueNodes(events []buffer.Event) []string {
 		out = append(out, ev.NodeID)
 	}
 	return out
+}
+
+func buildClockTimeline(events []buffer.Event) manifest.ClockTimeline {
+	var tl manifest.ClockTimeline
+	for i, ev := range events {
+		if ev.IOEvent.IsWrite == 2 {
+			continue
+		}
+		tl.Entries = append(tl.Entries, manifest.ClockEntry{
+			Index:       i,
+			TimestampNs: ev.IOEvent.TimestampNs,
+		})
+	}
+	return tl
 }
 
 func sha256Hex(b []byte) string {

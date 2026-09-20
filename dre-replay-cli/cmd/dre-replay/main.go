@@ -10,7 +10,9 @@ import (
 	"syscall"
 
 	"github.com/bugit/dre-engine/dre-replay-cli/internal/archive"
+	"github.com/bugit/dre-engine/dre-replay-cli/internal/config"
 	"github.com/bugit/dre-engine/dre-replay-cli/internal/debugger"
+	"github.com/bugit/dre-engine/dre-replay-cli/internal/delve"
 	"github.com/bugit/dre-engine/dre-replay-cli/internal/proxy"
 	"github.com/bugit/dre-engine/dre-replay-cli/internal/summary"
 )
@@ -25,6 +27,8 @@ func main() {
 		runLoad(os.Args[2:])
 	case "run":
 		runServe(os.Args[2:])
+	case "debug":
+		runDebug(os.Args[2:])
 	default:
 		usage()
 		os.Exit(1)
@@ -47,12 +51,13 @@ func runLoad(args []string) {
 	enc.SetIndent("", "  ")
 	if *format == "ide" {
 		_ = enc.Encode(map[string]interface{}{
-			"manifest":      snap.Manifest,
-			"vector_graph":  snap.VectorGraph,
-			"event_count":   len(snap.Events),
-			"vector_nodes":  len(snap.VectorGraph.Nodes),
-			"events":        summary.SummarizeEvents(snap.Events),
-			"flow":          summary.FlowDescription(snap.Events),
+			"manifest":     snap.Manifest,
+			"vector_graph": snap.VectorGraph,
+			"event_count":  len(snap.Events),
+			"vector_nodes": len(snap.VectorGraph.Nodes),
+			"events":       summary.SummarizeEvents(snap.Events),
+			"flow":         summary.FlowDescription(snap.Events),
+			"clock_timeline": snap.ClockTimeline,
 			"replay": map[string]string{
 				"proxy_addr": *proxyAddr,
 				"debug_addr": "127.0.0.1:19090",
@@ -70,20 +75,35 @@ func runServe(args []string) {
 	fs := flag.NewFlagSet("run", flag.ExitOnError)
 	path := fs.String("dre", "", "path to .dre snapshot")
 	key := fs.String("key", "dev-insecure-key-change-me", "AES key")
-	proxyAddr := fs.String("proxy", "127.0.0.1:18080", "proxy listen address")
+	cfgPath := fs.String("config", "", "replay.yaml path")
+	proxyAddr := fs.String("proxy", "", "proxy listen address override")
 	_ = fs.Parse(args)
+
+	cfg, err := config.Load(*cfgPath)
+	if err != nil {
+		fatal(err)
+	}
+	addr := cfg.ProxyAddr
+	if *proxyAddr != "" {
+		addr = *proxyAddr
+	}
 
 	snap, err := archive.Open(*path, *key)
 	if err != nil {
 		fatal(err)
 	}
-	p := proxy.New(*proxyAddr, snap.Events)
+	p := proxy.New(addr, snap.Events)
 	if err := p.Start(); err != nil {
 		fatal(err)
 	}
 	dbg := debugger.New("/tmp/dre-debug.sock", snap.Events)
 	if err := dbg.Start(); err != nil {
 		log.Printf("debugger api: %v", err)
+	}
+	if cfg.TimeFreeze.Enabled && len(snap.ClockTimeline.Entries) > 0 {
+		ts := snap.ClockTimeline.Entries[0].TimestampNs
+		os.Setenv("DRE_FROZEN_TIME_NS", fmt.Sprintf("%d", ts))
+		log.Printf("time-freeze env DRE_FROZEN_TIME_NS=%d (use LD_PRELOAD=%s)", ts, cfg.TimeFreeze.ShimPath)
 	}
 
 	log.Printf("replay ready: manifest=%s events=%d", snap.Manifest.ID, len(snap.Events))
@@ -92,10 +112,25 @@ func runServe(args []string) {
 	<-sig
 }
 
+func runDebug(args []string) {
+	fs := flag.NewFlagSet("debug", flag.ExitOnError)
+	binary := fs.String("binary", "", "Go binary to debug")
+	_ = fs.Parse(args)
+	if *binary == "" {
+		fatal(fmt.Errorf("--binary required"))
+	}
+	d := delve.New()
+	if err := d.StartHeadless(*binary); err != nil {
+		fatal(err)
+	}
+	fmt.Println("Delve headless on 127.0.0.1:2345")
+}
+
 func usage() {
 	fmt.Println(`dre-replay commands:
-  dre-replay load --dre incident.dre [--key KEY]
-  dre-replay run --dre incident.dre [--proxy 127.0.0.1:18080] [--key KEY]`)
+  dre-replay load --dre incident.dre [--key KEY] [--format ide]
+  dre-replay run --dre incident.dre [--config replay.yaml] [--proxy ADDR]
+  dre-replay debug --binary ./app`)
 }
 
 func fatal(err error) {

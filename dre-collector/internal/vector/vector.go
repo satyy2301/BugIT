@@ -6,19 +6,24 @@ import (
 
 	"github.com/bugit/dre-engine/api/ioevent"
 	"github.com/bugit/dre-engine/api/manifest"
+	"github.com/bugit/dre-engine/pkg/vectorclock"
 )
 
-const HeaderName = "X-DRE-Vector-Clock"
+const HeaderName = vectorclock.HeaderName
 
 type Engine struct {
 	mu    sync.Mutex
+	clock *vectorclock.Engine
 	seq   map[string]uint64
 	nodes []manifest.VectorNode
 	edges []manifest.VectorEdge
 }
 
 func New() *Engine {
-	return &Engine{seq: make(map[string]uint64)}
+	return &Engine{
+		clock: vectorclock.New(),
+		seq:   make(map[string]uint64),
+	}
 }
 
 func (e *Engine) Observe(nodeID string, evt ioevent.IOEvent) {
@@ -40,10 +45,7 @@ func (e *Engine) Observe(nodeID string, evt ioevent.IOEvent) {
 }
 
 func (e *Engine) InjectHeader(nodeID string) string {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	e.seq[nodeID]++
-	return fmt.Sprintf("%s:%d", nodeID, e.seq[nodeID])
+	return e.clock.InjectHeader(nodeID)
 }
 
 func (e *Engine) ParseHeader(value string) (nodeID string, seq uint64, ok bool) {
@@ -59,6 +61,20 @@ func (e *Engine) ParseHeader(value string) (nodeID string, seq uint64, ok bool) 
 		s = s*10 + uint64(c-'0')
 	}
 	return parts[0], s, true
+}
+
+func (e *Engine) MergeRemote(remoteNode string, seq uint64, localNode string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	remoteID := fmt.Sprintf("%s:%d", remoteNode, seq)
+	localSeq := e.seq[localNode]
+	localID := fmt.Sprintf("%s:%d", localNode, localSeq)
+	e.nodes = append(e.nodes, manifest.VectorNode{
+		ID:       remoteID,
+		NodeID:   remoteNode,
+		Sequence: seq,
+	})
+	e.edges = append(e.edges, manifest.VectorEdge{From: remoteID, To: localID})
 }
 
 func (e *Engine) Graph() manifest.VectorGraph {
@@ -79,14 +95,9 @@ func splitClock(v string) []string {
 	return []string{v}
 }
 
-// MaybeInjectHTTP adds vector clock header to outbound HTTP payloads (userspace stub).
 func MaybeInjectHTTP(payload []byte, nodeID string, eng *Engine) []byte {
-	if len(payload) < 12 {
+	if eng == nil {
 		return payload
 	}
-	if payload[0] != 'G' && payload[0] != 'P' && payload[0] != 'H' {
-		return payload
-	}
-	header := fmt.Sprintf("%s: %s\r\n", HeaderName, eng.InjectHeader(nodeID))
-	return append([]byte(header), payload...)
+	return vectorclock.MaybeInjectHTTP(payload, nodeID, eng.clock)
 }
