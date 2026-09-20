@@ -67,6 +67,29 @@ export function activate(context: vscode.ExtensionContext) {
   );
 }
 
+function resolveRepoRoot(): string | undefined {
+  const folders = vscode.workspace.workspaceFolders;
+  if (!folders?.length) {
+    return undefined;
+  }
+  let dir = folders[0].uri.fsPath;
+  for (let i = 0; i < 5; i++) {
+    const hasBin =
+      fs.existsSync(path.join(dir, 'bin', 'dre-replay.exe')) ||
+      fs.existsSync(path.join(dir, 'bin', 'dre-replay'));
+    const hasDeploy = fs.existsSync(path.join(dir, 'deploy', 'replay.yaml'));
+    if (hasBin || hasDeploy) {
+      return dir;
+    }
+    const parent = path.dirname(dir);
+    if (parent === dir) {
+      break;
+    }
+    dir = parent;
+  }
+  return folders[0].uri.fsPath;
+}
+
 function resolveReplayBin(): string {
   const cfg = vscode.workspace.getConfiguration('bugit');
   const configured = cfg.get<string>('replayBin');
@@ -76,9 +99,8 @@ function resolveReplayBin(): string {
   if (process.env.DRE_REPLAY_BIN && fs.existsSync(process.env.DRE_REPLAY_BIN)) {
     return process.env.DRE_REPLAY_BIN;
   }
-  const folders = vscode.workspace.workspaceFolders;
-  if (folders && folders.length > 0) {
-    const root = folders[0].uri.fsPath;
+  const root = resolveRepoRoot();
+  if (root) {
     for (const c of [path.join(root, 'bin', 'dre-replay.exe'), path.join(root, 'bin', 'dre-replay')]) {
       if (fs.existsSync(c)) {
         return c;
@@ -93,9 +115,9 @@ function resolveConfigPath(): string {
   if (cfg && fs.existsSync(cfg)) {
     return cfg;
   }
-  const folders = vscode.workspace.workspaceFolders;
-  if (folders && folders.length > 0) {
-    const p = path.join(folders[0].uri.fsPath, 'deploy', 'replay.yaml');
+  const root = resolveRepoRoot();
+  if (root) {
+    const p = path.join(root, 'deploy', 'replay.yaml');
     if (fs.existsSync(p)) {
       return p;
     }
@@ -142,7 +164,7 @@ async function loadSnapshot() {
   let stderr = '';
   child.stdout.on('data', (d) => (stdout += d.toString()));
   child.stderr.on('data', (d) => (stderr += d.toString()));
-  child.on('close', (code) => {
+  child.on('close', async (code) => {
     if (code !== 0) {
       vscode.window.showErrorMessage(`dre-replay failed: ${stderr || code}`);
       return;
@@ -150,7 +172,7 @@ async function loadSnapshot() {
     try {
       currentPayload = JSON.parse(stdout) as IDELoadResponse;
       highlightedIndex = 0;
-      startReplay(replayBin, drePath!, key, configPath);
+      await startReplay(replayBin, drePath!, key, configPath, currentPayload.replay?.debug_addr);
       renderPanel();
       const title = currentPayload.manifest.incident?.title ?? currentPayload.manifest.id;
       vscode.window.showInformationMessage(`Loaded: ${title}`);
@@ -160,8 +182,17 @@ async function loadSnapshot() {
   });
 }
 
-function startReplay(replayBin: string, dre: string, key: string, configPath: string) {
+async function startReplay(
+  replayBin: string,
+  dre: string,
+  key: string,
+  configPath: string,
+  debugAddr?: string,
+) {
   stopReplay();
+  if (debugAddr && await isDebuggerReachable(debugAddr)) {
+    return;
+  }
   const args = ['run', '--dre', dre, '--key', key];
   if (configPath) {
     args.push('--config', configPath);
@@ -175,6 +206,17 @@ function startReplay(replayBin: string, dre: string, key: string, configPath: st
   replayProcess.on('exit', () => {
     replayProcess = undefined;
   });
+}
+
+async function isDebuggerReachable(debugAddr: string): Promise<boolean> {
+  const [host, portStr] = debugAddr.includes(':') ? debugAddr.split(':') : ['127.0.0.1', '19090'];
+  const port = parseInt(portStr, 10);
+  try {
+    await debuggerRequest(host, port, { method: 'GetState' });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function stopReplay() {
@@ -271,18 +313,20 @@ function renderPanel() {
   const clockRows = clockEntries
     .map((c) => {
       const cls = c.index === highlightedIndex ? 'active-row' : '';
-      return `<tr class="${cls}"><td>${c.index}</td><td>${c.timestamp_ns}</td>
-        <td><button onclick="seek(${c.index})">Seek</button></td></tr>`;
+      return `<tr class="${cls}"><td>${c.index + 1}</td><td>${c.timestamp_ns}</td>
+        <td><button type="button" class="seek-btn" data-action="seek" data-index="${c.index}">Seek</button></td></tr>`;
     })
     .join('');
 
   const services = incident?.services?.join(', ') ?? '—';
   const triggerBadge = trigger.type === 'http_5xx' ? 'auto-detected' : trigger.type;
-  const replayStatus = replayProcess ? 'running' : (replay?.status ?? 'stopped');
+  const replayStatus = replayProcess ? 'running (extension)' : (replay?.status ?? 'external or stopped');
+  const nonce = getNonce();
 
   panel.webview.html = `<!DOCTYPE html>
 <html>
 <head>
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}';">
   <style>
     body { font-family: -apple-system, sans-serif; padding: 16px; color: #ccc; background: #1e1e1e; line-height: 1.5; }
     .banner { background: #3d1f1f; border: 1px solid #c44; border-radius: 8px; padding: 16px; margin-bottom: 16px; }
@@ -311,9 +355,9 @@ function renderPanel() {
     <p><strong>Root cause:</strong> ${esc(incident?.root_cause ?? '—')}</p>
   </div>
   <div class="controls">
-    <button onclick="step('StepBackward')">◀ Step Back</button>
-    <button onclick="step('StepForward')">Step Forward ▶</button>
-    <button class="secondary" onclick="stop()">Stop Replay</button>
+    <button type="button" data-action="step" data-method="StepBackward">◀ Step Back</button>
+    <button type="button" data-action="step" data-method="StepForward">Step Forward ▶</button>
+    <button type="button" class="secondary" data-action="stop">Stop Replay</button>
   </div>
   <div class="meta">
     <span class="badge">Cluster: ${esc(p.manifest.cluster)}</span>
@@ -338,14 +382,33 @@ function renderPanel() {
     <tr><th>#</th><th>Service</th><th>Dir</th><th>Summary</th><th>Payload</th></tr>
     ${eventRows || '<tr><td colspan="5">No events</td></tr>'}
   </table>
-  <script>
+  <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
-    function step(method) { vscode.postMessage({ type: 'step', method }); }
-    function seek(index) { vscode.postMessage({ type: 'step', method: 'Seek', index }); }
-    function stop() { vscode.postMessage({ type: 'stop' }); }
+    document.querySelectorAll('[data-action]').forEach((el) => {
+      el.addEventListener('click', () => {
+        const action = el.getAttribute('data-action');
+        if (action === 'step') {
+          vscode.postMessage({ type: 'step', method: el.getAttribute('data-method') });
+        } else if (action === 'seek') {
+          const index = parseInt(el.getAttribute('data-index') ?? '0', 10);
+          vscode.postMessage({ type: 'step', method: 'Seek', index });
+        } else if (action === 'stop') {
+          vscode.postMessage({ type: 'stop' });
+        }
+      });
+    });
   </script>
 </body>
 </html>`;
+}
+
+function getNonce(): string {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+  let nonce = '';
+  for (let i = 0; i < 32; i++) {
+    nonce += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return nonce;
 }
 
 function esc(s: string): string {
@@ -371,12 +434,22 @@ async function debuggerCall(method: string, seekIndex?: number) {
       body.index = seekIndex;
     }
     const resp = await debuggerRequest(host, port, body);
-    if (typeof resp.index === 'number') {
-      highlightedIndex = resp.index;
+    const idx = Number(resp.index);
+    if (!Number.isNaN(idx)) {
+      highlightedIndex = idx;
       renderPanel();
     }
   } catch (err) {
-    vscode.window.showWarningMessage(`Debugger not reachable (${err}). Is replay running?`);
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg.includes('ECONNREFUSED')) {
+      vscode.window.showWarningMessage(
+        `Debugger not reachable on ${addr}. Start replay with dre-replay run or DRE: Load Snapshot.`,
+      );
+    } else if (msg === 'invalid debugger response') {
+      vscode.window.showWarningMessage(`Debugger returned invalid JSON on ${addr}.`);
+    } else {
+      vscode.window.showWarningMessage(`Debugger error (${msg}). Is replay running on ${addr}?`);
+    }
   }
 }
 
@@ -386,19 +459,30 @@ function debuggerRequest(host: string, port: number, body: Record<string, unknow
       sock.write(JSON.stringify(body) + '\n');
     });
     let data = '';
-    sock.on('data', (chunk) => (data += chunk.toString()));
-    sock.on('end', () => {
+    let settled = false;
+    const finish = (err?: Error, result?: { index?: number; total?: number }) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timer);
+      sock.destroy();
+      if (err) {
+        reject(err);
+      } else {
+        resolve(result!);
+      }
+    };
+    sock.on('data', (chunk) => {
+      data += chunk.toString();
       try {
-        resolve(JSON.parse(data.trim()));
+        finish(undefined, JSON.parse(data.trim()) as { index?: number; total?: number });
       } catch {
-        reject(new Error('invalid debugger response'));
+        // incomplete JSON; wait for more data
       }
     });
-    sock.on('error', reject);
-    setTimeout(() => {
-      sock.destroy();
-      reject(new Error('timeout'));
-    }, 2000);
+    sock.on('error', (err) => finish(err));
+    const timer = setTimeout(() => finish(new Error('timeout')), 2000);
   });
 }
 
