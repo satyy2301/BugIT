@@ -25,16 +25,15 @@ func TestSnapshotRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	grpcSrv := grpc.NewServer(grpcapi.ServerOptions()...)
+	grpcSrv := grpc.NewServer()
 	grpcapi.RegisterEventIngestServer(grpcSrv, collector)
 	grpcapi.RegisterCollectorAdminServer(grpcSrv, collector)
 	go grpcSrv.Serve(grpcLis)
 	defer grpcSrv.Stop()
 
-	opts := append(grpcapi.DialOptions(),
+	conn, err := grpc.Dial(grpcLis.Addr().String(),
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 	)
-	conn, err := grpc.Dial(grpcLis.Addr().String(), opts...)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +55,7 @@ func TestSnapshotRoundTrip(t *testing.T) {
 	if err := stream.Send(grpcapi.IOEventFromNative(evt, "node-a")); err != nil {
 		t.Fatal(err)
 	}
-	_, _ = stream.CloseAndRecv()
+	_ = stream.CloseSend()
 
 	admin := grpcapi.NewCollectorAdminClient(conn)
 	resp, err := admin.TriggerSnapshot(context.Background(), &grpcapi.TriggerSnapshotRequest{
@@ -66,11 +65,11 @@ func TestSnapshotRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if resp.SnapshotID == "" {
+	if resp.SnapshotId == "" {
 		t.Fatal("expected snapshot id")
 	}
 
-	drePath := filepath.Join(dir, "incident-"+resp.SnapshotID+".dre")
+	drePath := filepath.Join(dir, "incident-"+resp.SnapshotId+".dre")
 	if _, err := os.Stat(drePath); err != nil {
 		list, err := admin.ListSnapshots(context.Background(), &grpcapi.Empty{})
 		if err != nil || len(list.Snapshots) == 0 {

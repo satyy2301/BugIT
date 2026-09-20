@@ -31,7 +31,7 @@ func LoadCollection() (*Collection, error) {
 }
 
 func (c *Collection) attach() error {
-	progs := []struct {
+	tracepoints := []struct {
 		group string
 		name  string
 		prog  *ebpf.Program
@@ -41,9 +41,11 @@ func (c *Collection) attach() error {
 		{"syscalls", "sys_enter_recvfrom", c.objs.DreTraceRecvfrom},
 		{"syscalls", "sys_enter_sendto", c.objs.DreTraceSendto},
 		{"sched", "sched_switch", c.objs.DreTraceSchedSwitch},
+		{"sched", "sched_process_exit", c.objs.DreTraceProcessExit},
+		{"signal", "signal_generate", c.objs.DreTraceSignalGenerate},
 	}
 
-	for _, tp := range progs {
+	for _, tp := range tracepoints {
 		if tp.prog == nil {
 			return fmt.Errorf("missing program for %s/%s", tp.group, tp.name)
 		}
@@ -52,6 +54,32 @@ func (c *Collection) attach() error {
 			return fmt.Errorf("attach %s/%s: %w", tp.group, tp.name, err)
 		}
 		c.links = append(c.links, l)
+	}
+
+	libcPaths := []string{
+		"/lib/x86_64-linux-gnu/libc.so.6",
+		"/usr/lib/x86_64-linux-gnu/libc.so.6",
+		"/lib64/libc.so.6",
+		"/usr/lib64/libc.so.6",
+	}
+	if c.objs.DreUprobeClockGettime != nil {
+		attached := false
+		for _, path := range libcPaths {
+			exe, err := link.OpenExecutable(path)
+			if err != nil {
+				continue
+			}
+			l, err := link.Uprobe(exe, "clock_gettime", c.objs.DreUprobeClockGettime, nil)
+			if err != nil {
+				continue
+			}
+			c.links = append(c.links, l)
+			attached = true
+			break
+		}
+		if !attached {
+			return fmt.Errorf("attach clock_gettime uprobe: libc not found")
+		}
 	}
 	return nil
 }

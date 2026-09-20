@@ -12,15 +12,54 @@ spec:
       labels:
         app: dre-agent
     spec:
+      serviceAccountName: dre-agent
+      tolerations:
+        - operator: Exists
       containers:
         - name: dre-agent
           image: {{ .Values.agent.image }}
+          imagePullPolicy: IfNotPresent
           securityContext:
             privileged: true
+          ports:
+            - name: metrics
+              containerPort: 9100
           env:
             - name: DRE_COLLECTOR_ADDR
               value: dre-collector:9090
+            - name: DRE_COLLECTOR_HTTP_ADDR
+              value: http://dre-collector:8080
+            - name: DRE_NODE_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
             - name: DRE_SKIP_BPF
               value: {{ ternary "1" "0" .Values.agent.skipBpf | quote }}
+            - name: DRE_MOCK_MODE
+              value: "0"
+            - name: DRE_MEMORY_LIMIT_BYTES
+              value: {{ .Values.agent.memoryLimitBytes | quote }}
+            - name: DRE_METRICS_ADDR
+              value: ":9100"
+          volumeMounts:
+            - name: bpf
+              mountPath: /sys/fs/bpf
+            - name: tracefs
+              mountPath: /sys/kernel/tracing
+            - name: debugfs
+              mountPath: /sys/kernel/debug
           resources:
             {{- toYaml .Values.agent.resources | nindent 12 }}
+      volumes:
+        - name: bpf
+          hostPath:
+            path: /sys/fs/bpf
+            type: DirectoryOrCreate
+        - name: tracefs
+          hostPath:
+            path: /sys/kernel/tracing
+            type: Directory
+        - name: debugfs
+          hostPath:
+            path: /sys/kernel/debug
+            type: Directory

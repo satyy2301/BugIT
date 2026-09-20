@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dre-collector-config
+  namespace: {{ .Release.Namespace }}
+data:
+  trigger_rules.yaml: |
+    http_5xx:
+      - "HTTP/1.1 5"
+      - "HTTP/1.0 5"

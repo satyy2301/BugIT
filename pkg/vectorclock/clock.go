@@ -1,6 +1,7 @@
 package vectorclock
 
 import (
+	"bytes"
 	"fmt"
 	"sync"
 )
@@ -31,8 +32,13 @@ func MaybeInjectHTTP(payload []byte, nodeID string, eng *Engine) []byte {
 		return payload
 	}
 	header := fmt.Sprintf("%s: %s\r\n", HeaderName, eng.InjectHeader(nodeID))
+	idx := bytes.Index(payload, []byte("\r\n"))
+	if idx < 0 {
+		return payload
+	}
 	out := make([]byte, 0, len(header)+len(payload))
+	out = append(out, payload[:idx+2]...)
 	out = append(out, header...)
-	out = append(out, payload...)
+	out = append(out, payload[idx+2:]...)
 	return out
 }

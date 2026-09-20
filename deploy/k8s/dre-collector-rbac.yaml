@@ -1,0 +1,29 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: dre-collector-leader
+  namespace: dre-engine
+rules:
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: dre-collector-leader
+  namespace: dre-engine
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: dre-collector-leader
+subjects:
+  - kind: ServiceAccount
+    name: dre-collector
+    namespace: dre-engine
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: dre-collector
+  namespace: dre-engine

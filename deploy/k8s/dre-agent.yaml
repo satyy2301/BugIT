@@ -30,6 +30,8 @@ spec:
           env:
             - name: DRE_COLLECTOR_ADDR
               value: dre-collector:9090
+            - name: DRE_COLLECTOR_HTTP_ADDR
+              value: http://dre-collector:8080
             - name: DRE_NODE_ID
               valueFrom:
                 fieldRef:

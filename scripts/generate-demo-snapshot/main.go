@@ -9,6 +9,8 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/bugit/dre-engine/api/ioevent"
+	"github.com/bugit/dre-engine/api/manifest"
 	"github.com/bugit/dre-engine/pkg/demo"
 	"github.com/bugit/dre-engine/pkg/drearchive"
 	"github.com/google/uuid"
@@ -32,7 +34,8 @@ func main() {
 	}
 	m.Checksum = sha256Hex(eventsBuf.Bytes())
 
-	tarGz, err := drearchive.PackTarGz(m, eventsBuf.Bytes(), graph, redact, manifest.ClockTimeline{})
+	clock := buildClockTimeline(events)
+	tarGz, err := drearchive.PackTarGz(m, eventsBuf.Bytes(), graph, redact, clock)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -52,6 +55,19 @@ func main() {
 		os.Exit(1)
 	}
 	fmt.Printf("wrote %s (%d events)\n", *out, len(events))
+}
+
+func buildClockTimeline(events []ioevent.IOEvent) manifest.ClockTimeline {
+	var tl manifest.ClockTimeline
+	for i, e := range events {
+		if e.IsWrite <= 1 {
+			tl.Entries = append(tl.Entries, manifest.ClockEntry{
+				Index:       i,
+				TimestampNs: e.TimestampNs,
+			})
+		}
+	}
+	return tl
 }
 
 func sha256Hex(b []byte) string {

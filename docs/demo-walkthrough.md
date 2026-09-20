@@ -29,9 +29,25 @@ You should see:
 ### Command line
 
 ```powershell
-.\bin\dre-replay.exe load --format ide --dre test\fixtures\demo-checkout-500.dre
-.\bin\dre-replay.exe run --dre test\fixtures\demo-checkout-500.dre
+.\bin\dre-replay.exe load --format ide --dre test\fixtures\demo-checkout-500.dre --config deploy\replay.yaml
+.\bin\dre-replay.exe run --dre test\fixtures\demo-checkout-500.dre --config deploy\replay.yaml
 ```
+
+The replay panel shows **Step Forward/Back** buttons, vector graph edges, and clock timeline.
+
+### Delve attach (headless debugging)
+
+1. Start replay with your Go binary (launches headless `dlv` on `127.0.0.1:2345` by default):
+
+   ```powershell
+   .\bin\dre-replay.exe run --dre test\fixtures\demo-checkout-500.dre --config deploy\replay.yaml --binary .\your-app.exe
+   ```
+
+2. In the Extension Development Host, run **Ctrl+Shift+P** → **DRE: Attach Delve**, or open **Run and Debug** and choose **DRE: Attach Delve** (requires the [Go extension](https://marketplace.visualstudio.com/items?itemName=golang.go)).
+
+3. Set breakpoints in your app, step the replay cursor in the DRE panel, and inspect locals as the proxy replays captured traffic.
+
+Delve listen address comes from `delve_addr` in the IDE payload or `bugit.delveAddr` in settings (default `127.0.0.1:2345`).
 
 ## What does "replay" mean?
 

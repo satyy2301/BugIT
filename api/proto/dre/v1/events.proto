@@ -29,6 +29,8 @@ message TriggerSnapshotRequest {
 message TriggerSnapshotResponse {
   string snapshot_id = 1;
   string path = 2;
+  string storage_uri = 3;
+  string download_url = 4;
 }
 
 message SnapshotInfo {
@@ -36,6 +38,8 @@ message SnapshotInfo {
   string path = 2;
   string captured_at = 3;
   int64 event_count = 4;
+  string storage_uri = 5;
+  string download_url = 6;
 }
 
 message ListSnapshotsResponse {

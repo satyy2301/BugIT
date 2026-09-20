@@ -82,6 +82,17 @@ func uniqueNodes(events []buffer.Event) []string {
 func buildClockTimeline(events []buffer.Event) manifest.ClockTimeline {
 	var tl manifest.ClockTimeline
 	for i, ev := range events {
+		if ev.IOEvent.IsWrite == 3 {
+			tl.Entries = append(tl.Entries, manifest.ClockEntry{
+				Index:       i,
+				TimestampNs: ev.IOEvent.TimestampNs,
+			})
+		}
+	}
+	if len(tl.Entries) > 0 {
+		return tl
+	}
+	for i, ev := range events {
 		if ev.IOEvent.IsWrite == 2 {
 			continue
 		}

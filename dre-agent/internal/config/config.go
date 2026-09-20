@@ -6,11 +6,12 @@ import (
 )
 
 type Config struct {
-	CollectorAddr string
-	NodeID        string
-	MetricsAddr   string
-	RingbufSizeMB int
-	MockMode      bool
+	CollectorAddr     string
+	CollectorHTTPAddr string
+	NodeID            string
+	MetricsAddr       string
+	RingbufSizeMB     int
+	MockMode          bool
 }
 
 func Load() Config {
@@ -26,11 +27,12 @@ func Load() Config {
 		nodeID = "node-local"
 	}
 	return Config{
-		CollectorAddr: envOr("DRE_COLLECTOR_ADDR", "dre-collector:9090"),
-		NodeID:        nodeID,
-		MetricsAddr:   envOr("DRE_METRICS_ADDR", ":9100"),
-		RingbufSizeMB: ringbufMB,
-		MockMode:      mock,
+		CollectorAddr:     envOr("DRE_COLLECTOR_ADDR", "dre-collector:9090"),
+		CollectorHTTPAddr: envOr("DRE_COLLECTOR_HTTP_ADDR", "http://dre-collector:8080"),
+		NodeID:            nodeID,
+		MetricsAddr:       envOr("DRE_METRICS_ADDR", ":9100"),
+		RingbufSizeMB:     ringbufMB,
+		MockMode:          mock,
 	}
 }
 

@@ -12,6 +12,8 @@ type Loader struct{}
 
 func NewLoader() *Loader { return &Loader{} }
 
+func (l *Loader) SetMarkerHandler(_ MarkerHandler) {}
+
 func (l *Loader) Load() error { return nil }
 
 func (l *Loader) Close() error { return nil }

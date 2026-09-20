@@ -2,19 +2,35 @@ agent:
   image: bugit/dre-agent:dev
   resources:
     limits:
-      memory: 128Mi
+      memory: 512Mi
     requests:
       cpu: 50m
-      memory: 64Mi
+      memory: 128Mi
   skipBpf: false
+  memoryLimitBytes: 536870912
 
 collector:
   image: bugit/dre-collector:dev
-  replicas: 1
+  replicas: 2
   cluster: production
+  leaderElect: true
+  resources:
+    limits:
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 256Mi
 
 snapshot:
   encryptionSecret: dre-snapshot-key
+  encryptionKey: dev-insecure-key-change-me
 
 s3:
   bucket: ""
+  prefix: ""
+  region: us-east-1
+  endpoint: ""
+
+pvc:
+  enabled: true
+  size: 5Gi

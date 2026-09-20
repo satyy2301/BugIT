@@ -12,8 +12,13 @@ type Bridge struct {
 
 func New() *Bridge { return &Bridge{} }
 
-func (b *Bridge) StartHeadless(binary string) error {
-	b.cmd = exec.Command("dlv", "exec", binary, "--headless", "--listen=:2345", "--api-version=2", "--accept-multiclient")
+func (b *Bridge) StartHeadless(binary, listenAddr string) error {
+	if listenAddr == "" {
+		listenAddr = "127.0.0.1:2345"
+	}
+	b.cmd = exec.Command("dlv", "exec", binary,
+		"--headless", "--listen="+listenAddr,
+		"--api-version=2", "--accept-multiclient")
 	b.cmd.Stdout = nil
 	b.cmd.Stderr = nil
 	if err := b.cmd.Start(); err != nil {

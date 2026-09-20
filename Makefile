@@ -34,7 +34,7 @@ $(VMLINUX_HDR):
 		bash scripts/gen-vmlinux.sh "$(VMLINUX_HDR)"; \
 	fi
 
-build-linux: bpf build
+build-linux: bpf clock-shim build
 
 proto:
 	$(GO) install google.golang.org/protobuf/cmd/protoc-gen-go@latest
@@ -71,6 +71,7 @@ kind-load:
 
 deploy-kind:
 	kubectl apply -f deploy/k8s/namespace.yaml
+	kubectl apply -f deploy/k8s/dre-collector-rbac.yaml
 	kubectl apply -f deploy/k8s/dre-collector.yaml
 	kubectl apply -f deploy/k8s/dre-agent.yaml
 	kubectl apply -f deploy/k8s/nginx-sample.yaml

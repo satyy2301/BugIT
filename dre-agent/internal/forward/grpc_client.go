@@ -32,10 +32,10 @@ func (c *Client) Connect(ctx context.Context) error {
 	if c.conn != nil {
 		return nil
 	}
-	opts := append(grpcapi.DialOptions(),
+	opts := []grpc.DialOption{
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithBlock(),
-	)
+	}
 	conn, err := grpc.DialContext(ctx, c.addr, opts...)
 	if err != nil {
 		return err
@@ -74,7 +74,10 @@ func (c *Client) SendEvent(ctx context.Context, evt ioevent.IOEvent) error {
 	if err := stream.Send(msg); err != nil {
 		return err
 	}
-	_, err = stream.CloseAndRecv()
+	if err := stream.CloseSend(); err != nil {
+		return err
+	}
+	_, err = stream.Recv()
 	return err
 }
 
@@ -101,17 +104,17 @@ func (c *Client) runStream(ctx context.Context, stream grpcapi.EventIngest_Strea
 	for {
 		select {
 		case <-ctx.Done():
-			_, _ = stream.CloseAndRecv()
+			_ = stream.CloseSend()
 			return true
 		case evt, ok := <-events:
 			if !ok {
-				_, _ = stream.CloseAndRecv()
+				_ = stream.CloseSend()
 				return true
 			}
 			evt = c.injectVector(evt)
 			if err := stream.Send(grpcapi.IOEventFromNative(evt, c.nodeID)); err != nil {
 				log.Printf("forward send: %v", err)
-				_, _ = stream.CloseAndRecv()
+				_ = stream.CloseSend()
 				return false
 			}
 		}

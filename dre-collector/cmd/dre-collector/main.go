@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sync/atomic"
 	"syscall"
 
 	"github.com/bugit/dre-engine/dre-collector/internal/leader"
@@ -31,23 +32,41 @@ func main() {
 	}
 
 	metrics.Register()
-	go func() {
-		mux := http.NewServeMux()
-		mux.Handle("/metrics", metrics.Handler())
-		_ = http.ListenAndServe(envOr("DRE_METRICS_ADDR", ":8081"), mux)
-	}()
+	var isLeader atomic.Bool
+	metricsAddr := envOr("DRE_METRICS_ADDR", ":8081")
+	go serveMetricsAndReadiness(metricsAddr, &isLeader)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
 	collector := server.New(dataDir, cluster, key, uploader)
 	if err := leader.RunElection(ctx, func(leadCtx context.Context) {
-		if err := collector.Start(grpcAddr, httpAddr); err != nil {
-			log.Fatal(err)
+		isLeader.Store(true)
+		defer isLeader.Store(false)
+		if err := collector.Run(leadCtx, grpcAddr, httpAddr); err != nil {
+			log.Printf("collector stopped: %v", err)
 		}
 	}); err != nil {
 		log.Fatal(err)
 	}
+}
+
+func serveMetricsAndReadiness(addr string, isLeader *atomic.Bool) {
+	mux := http.NewServeMux()
+	mux.Handle("/metrics", metrics.Handler())
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	})
+	mux.HandleFunc("/readyz", func(w http.ResponseWriter, _ *http.Request) {
+		if os.Getenv("DRE_LEADER_ELECT") == "1" && !isLeader.Load() {
+			http.Error(w, "not leader", http.StatusServiceUnavailable)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ready"))
+	})
+	_ = http.ListenAndServe(addr, mux)
 }
 
 func envOr(k, def string) string {

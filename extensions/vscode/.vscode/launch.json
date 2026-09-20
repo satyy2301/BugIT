@@ -12,6 +12,14 @@
         "${workspaceFolder}/out/**/*.js"
       ],
       "preLaunchTask": "npm: compile"
+    },
+    {
+      "name": "DRE: Attach Delve",
+      "type": "go",
+      "request": "attach",
+      "mode": "remote",
+      "host": "127.0.0.1",
+      "port": 2345
     }
   ]
 }

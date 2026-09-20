@@ -16,12 +16,17 @@ import (
 )
 
 type Loader struct {
-	reader  *ringbuf.Reader
-	coll    *bpf.Collection
-	bypass  bool
+	reader    *ringbuf.Reader
+	coll      *bpf.Collection
+	bypass    bool
+	onMarker  MarkerHandler
 }
 
 func NewLoader() *Loader { return &Loader{} }
+
+func (l *Loader) SetMarkerHandler(fn MarkerHandler) {
+	l.onMarker = fn
+}
 
 func (l *Loader) Load() error {
 	if os.Getenv("DRE_SKIP_BPF") == "1" {
@@ -75,6 +80,10 @@ func (l *Loader) Run(ctx context.Context, out chan<- ioevent.IOEvent) error {
 			}
 			evt, err := decodeRecord(record.RawSample)
 			if err != nil {
+				continue
+			}
+			if evt.IsWrite >= 4 && l.onMarker != nil {
+				l.onMarker(evt)
 				continue
 			}
 			metrics.EventsEmitted.Inc()

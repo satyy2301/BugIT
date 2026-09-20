@@ -2,7 +2,6 @@ package proxy
 
 import (
 	"bytes"
-	"io"
 	"log"
 	"net"
 	"strings"

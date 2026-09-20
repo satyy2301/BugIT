@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/bugit/dre-engine/api/grpcapi"
@@ -22,9 +23,14 @@ import (
 	"github.com/bugit/dre-engine/dre-collector/internal/trigger"
 	"github.com/bugit/dre-engine/dre-collector/internal/vector"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/health"
+	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 )
 
 type Collector struct {
+	grpcapi.UnimplementedEventIngestServer
+	grpcapi.UnimplementedCollectorAdminServer
+
 	buf      *buffer.RollingBuffer
 	vector   *vector.Engine
 	exporter *snapshot.Exporter
@@ -34,7 +40,8 @@ type Collector struct {
 	httpBase string
 
 	mu        sync.RWMutex
-	snapshots []grpcapi.SnapshotInfo
+	snapshots []*grpcapi.SnapshotInfo
+	ready     atomic.Bool
 }
 
 func New(dataDir, cluster, key string, uploader storage.Uploader) *Collector {
@@ -48,6 +55,11 @@ func New(dataDir, cluster, key string, uploader storage.Uploader) *Collector {
 		httpBase: envOr("DRE_HTTP_PUBLIC_URL", ""),
 	}
 	c.triggers = trigger.New(c.captureSnapshot)
+	if rules, err := trigger.LoadRules(envOr("DRE_TRIGGER_RULES_PATH", "/etc/dre/trigger_rules.yaml")); err != nil {
+		log.Printf("trigger rules: %v (using defaults)", err)
+	} else {
+		c.triggers.SetRules5xx(rules)
+	}
 	c.ingest = ingest.New(buf, c.triggers, vec)
 	return c
 }
@@ -68,8 +80,8 @@ func (c *Collector) captureSnapshot(trig manifest.Trigger) {
 		return
 	}
 
-	info := grpcapi.SnapshotInfo{
-		ID:         m.ID,
+	info := &grpcapi.SnapshotInfo{
+		Id:         m.ID,
 		Path:       path,
 		CapturedAt: m.CapturedAt.Format(timeRFC3339),
 		EventCount: int64(m.EventCount),
@@ -86,22 +98,22 @@ func (c *Collector) captureSnapshot(trig manifest.Trigger) {
 			if err != nil {
 				log.Printf("snapshot upload failed: %v", err)
 			} else {
-				info.StorageURI = uri
+				info.StorageUri = uri
 				if url, err := c.storage.PresignGet(ctx, m.ID, 24*time.Hour); err == nil {
-					info.DownloadURL = url
+					info.DownloadUrl = url
 				}
 			}
 		}
 	}
-	if info.DownloadURL == "" && c.httpBase != "" {
-		info.DownloadURL = strings.TrimRight(c.httpBase, "/") + "/v1/snapshots/" + m.ID + "/download"
+	if info.DownloadUrl == "" && c.httpBase != "" {
+		info.DownloadUrl = strings.TrimRight(c.httpBase, "/") + "/v1/snapshots/" + m.ID + "/download"
 	}
 
 	c.mu.Lock()
 	c.snapshots = append(c.snapshots, info)
 	c.mu.Unlock()
 	metrics.SnapshotsExported.Inc()
-	log.Printf("snapshot written: %s events=%d storage=%s", path, m.EventCount, info.StorageURI)
+	log.Printf("snapshot written: %s events=%d storage=%s", path, m.EventCount, info.StorageUri)
 }
 
 const timeRFC3339 = "2006-01-02T15:04:05Z"
@@ -115,37 +127,47 @@ func (c *Collector) TriggerSnapshot(_ context.Context, req *grpcapi.TriggerSnaps
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	if len(c.snapshots) == 0 {
-		return &grpcapi.TriggerSnapshotResponse{SnapshotID: "pending", Path: ""}, nil
+		return &grpcapi.TriggerSnapshotResponse{SnapshotId: "pending", Path: ""}, nil
 	}
 	last := c.snapshots[len(c.snapshots)-1]
 	return &grpcapi.TriggerSnapshotResponse{
-		SnapshotID:  last.ID,
+		SnapshotId:  last.Id,
 		Path:        last.Path,
-		StorageURI:  last.StorageURI,
-		DownloadURL: last.DownloadURL,
+		StorageUri:  last.StorageUri,
+		DownloadUrl: last.DownloadUrl,
 	}, nil
 }
 
 func (c *Collector) ListSnapshots(_ context.Context, _ *grpcapi.Empty) (*grpcapi.ListSnapshotsResponse, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	out := append([]grpcapi.SnapshotInfo(nil), c.snapshots...)
+	out := append([]*grpcapi.SnapshotInfo(nil), c.snapshots...)
 	return &grpcapi.ListSnapshotsResponse{Snapshots: out}, nil
 }
 
-func (c *Collector) Start(grpcAddr, httpAddr string) error {
-	grpcSrv := grpc.NewServer(grpcapi.ServerOptions()...)
+func (c *Collector) SetReady(ready bool) {
+	c.ready.Store(ready)
+}
+
+func (c *Collector) Run(ctx context.Context, grpcAddr, httpAddr string) error {
+	c.SetReady(true)
+	defer c.SetReady(false)
+
+	grpcSrv := grpc.NewServer()
 	grpcapi.RegisterEventIngestServer(grpcSrv, c)
 	grpcapi.RegisterCollectorAdminServer(grpcSrv, c)
+	healthSrv := health.NewServer()
+	healthSrv.SetServingStatus("", healthpb.HealthCheckResponse_SERVING)
+	healthpb.RegisterHealthServer(grpcSrv, healthSrv)
 
+	lis, err := net.Listen("tcp", grpcAddr)
+	if err != nil {
+		return err
+	}
 	go func() {
-		lis, err := net.Listen("tcp", grpcAddr)
-		if err != nil {
-			log.Fatal(err)
-		}
 		log.Printf("dre-collector gRPC listening on %s", grpcAddr)
 		if err := grpcSrv.Serve(lis); err != nil {
-			log.Fatal(err)
+			log.Printf("gRPC server: %v", err)
 		}
 	}()
 
@@ -153,6 +175,14 @@ func (c *Collector) Start(grpcAddr, httpAddr string) error {
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
+	})
+	mux.HandleFunc("/readyz", func(w http.ResponseWriter, _ *http.Request) {
+		if !c.ready.Load() {
+			http.Error(w, "not leader", http.StatusServiceUnavailable)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ready"))
 	})
 	mux.HandleFunc("/v1/trigger", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -175,8 +205,21 @@ func (c *Collector) Start(grpcAddr, httpAddr string) error {
 	mux.HandleFunc("/v1/snapshots/", func(w http.ResponseWriter, r *http.Request) {
 		c.serveSnapshotDownload(w, r)
 	})
-	log.Printf("dre-collector HTTP admin on %s", httpAddr)
-	return http.ListenAndServe(httpAddr, mux)
+	httpSrv := &http.Server{Addr: httpAddr, Handler: mux}
+	go func() {
+		log.Printf("dre-collector HTTP admin on %s", httpAddr)
+		if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Printf("HTTP server: %v", err)
+		}
+	}()
+
+	<-ctx.Done()
+	healthSrv.SetServingStatus("", healthpb.HealthCheckResponse_NOT_SERVING)
+	grpcSrv.GracefulStop()
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	_ = httpSrv.Shutdown(shutdownCtx)
+	return nil
 }
 
 func (c *Collector) serveSnapshotDownload(w http.ResponseWriter, r *http.Request) {
@@ -196,20 +239,20 @@ func (c *Collector) serveSnapshotDownload(w http.ResponseWriter, r *http.Request
 	}
 
 	c.mu.RLock()
-	var info grpcapi.SnapshotInfo
+	var info *grpcapi.SnapshotInfo
 	for _, s := range c.snapshots {
-		if s.ID == id {
+		if s.Id == id {
 			info = s
 			break
 		}
 	}
 	c.mu.RUnlock()
-	if info.Path == "" {
+	if info == nil || info.Path == "" {
 		http.NotFound(w, r)
 		return
 	}
-	if info.DownloadURL != "" && strings.HasPrefix(info.DownloadURL, "http") && !strings.Contains(info.DownloadURL, r.Host) {
-		http.Redirect(w, r, info.DownloadURL, http.StatusTemporaryRedirect)
+	if info.DownloadUrl != "" && strings.HasPrefix(info.DownloadUrl, "http") && !strings.Contains(info.DownloadUrl, r.Host) {
+		http.Redirect(w, r, info.DownloadUrl, http.StatusTemporaryRedirect)
 		return
 	}
 	w.Header().Set("Content-Type", "application/octet-stream")

@@ -32,8 +32,8 @@ func (s *Service) StreamEvents(stream grpcapi.EventIngest_StreamEventsServer) er
 		if err != nil {
 			return err
 		}
-		evt := msg.ToNative()
-		s.ingestEvent(evt, msg.NodeID)
+		evt := grpcapi.ToNative(msg)
+		s.ingestEvent(evt, msg.NodeId)
 	}
 }
 

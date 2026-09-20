@@ -7,39 +7,66 @@ import (
 	"sync"
 
 	"github.com/bugit/dre-engine/api/ioevent"
+	"github.com/bugit/dre-engine/dre-replay-cli/internal/timefreeze"
 )
+
+// Controller is implemented by orchestrator.Session.
+type Controller interface {
+	Cursor() int
+	Seek(index int) int
+	Step(delta int) int
+	Events() []ioevent.IOEvent
+}
 
 type Server struct {
 	addr   string
-	events []ioevent.IOEvent
+	ctrl   Controller
+	timeEng *timefreeze.Engine
 	mu     sync.Mutex
-	index  int
+	ln     net.Listener
 }
 
-func New(addr string, events []ioevent.IOEvent) *Server {
-	return &Server{addr: addr, events: events}
+func New(addr string, ctrl Controller) *Server {
+	return &Server{addr: addr, ctrl: ctrl}
+}
+
+func (s *Server) SetTimeEngine(eng *timefreeze.Engine) {
+	s.timeEng = eng
+}
+
+func (s *Server) Addr() string {
+	if s.ln != nil {
+		return s.ln.Addr().String()
+	}
+	return s.addr
 }
 
 func (s *Server) Start() error {
-	ln, err := net.Listen("unix", s.addr)
+	ln, err := net.Listen("tcp", s.addr)
 	if err != nil {
-		// Fallback to TCP for cross-platform dev.
-		ln, err = net.Listen("tcp", "127.0.0.1:19090")
-		if err != nil {
-			return err
-		}
+		return err
 	}
+	s.ln = ln
 	log.Printf("debugger sync API on %s", ln.Addr())
-	go func() {
-		for {
-			conn, err := ln.Accept()
-			if err != nil {
-				return
-			}
-			go s.handle(conn)
-		}
-	}()
+	go s.serve(ln)
 	return nil
+}
+
+func (s *Server) serve(ln net.Listener) {
+	for {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		go s.handle(conn)
+	}
+}
+
+func (s *Server) Stop() {
+	if s.ln != nil {
+		_ = s.ln.Close()
+		s.ln = nil
+	}
 }
 
 func (s *Server) handle(conn net.Conn) {
@@ -49,37 +76,63 @@ func (s *Server) handle(conn net.Conn) {
 	for {
 		var req struct {
 			Method string `json:"method"`
+			Index  int    `json:"index"`
 		}
 		if err := dec.Decode(&req); err != nil {
 			return
 		}
-		resp := s.dispatch(req.Method)
+		resp := s.dispatch(req.Method, req.Index)
 		if err := enc.Encode(resp); err != nil {
 			return
 		}
 	}
 }
 
-func (s *Server) dispatch(method string) map[string]interface{} {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+func (s *Server) dispatch(method string, seekIndex int) map[string]interface{} {
+	events := s.ctrl.Events()
+	var idx int
 	switch method {
 	case "StepForward":
-		if s.index < len(s.events) {
-			s.index++
-		}
+		idx = s.ctrl.Step(1)
 	case "StepBackward":
-		if s.index > 0 {
-			s.index--
-		}
+		idx = s.ctrl.Step(-1)
+	case "Seek":
+		idx = s.ctrl.Seek(seekIndex)
+	case "GetState":
+		idx = s.ctrl.Cursor()
+	case "RunToEvent":
+		idx = s.runToIOEvent(s.ctrl.Cursor())
+	default:
+		idx = s.ctrl.Cursor()
 	}
+
 	var evt *ioevent.IOEvent
-	if s.index < len(s.events) {
-		evt = &s.events[s.index]
+	if idx >= 0 && idx < len(events) {
+		evt = &events[idx]
 	}
-	return map[string]interface{}{
-		"index": s.index,
-		"total": len(s.events),
+
+	resp := map[string]interface{}{
+		"index": idx,
+		"total": len(events),
 		"event": evt,
 	}
+	if evt != nil {
+		resp["timestamp_ns"] = evt.TimestampNs
+	}
+	if s.timeEng != nil {
+		resp["clock_index"] = s.timeEng.ClockIndex(idx)
+		resp["frozen_timestamp_ns"] = s.timeEng.FrozenTimestampNs()
+	}
+	return resp
+}
+
+func (s *Server) runToIOEvent(start int) int {
+	events := s.ctrl.Events()
+	for i := start + 1; i < len(events); i++ {
+		evt := events[i]
+		if evt.IsWrite <= 1 {
+			return s.ctrl.Seek(i)
+		}
+	}
+	return s.ctrl.Cursor()
 }

@@ -1,7 +1,6 @@
 package proxy
 
 import (
-	"bytes"
 	"strings"
 )
 
@@ -29,9 +28,4 @@ func grpcRequestKey(request []byte) string {
 		return ""
 	}
 	return "GRPC " + svc + "/" + method
-}
-
-func matchGRPCResponse(payload []byte) bool {
-	return bytes.Contains(payload, []byte("grpc-status")) ||
-		bytes.Contains(payload, []byte("application/grpc"))
 }

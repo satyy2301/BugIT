@@ -9,6 +9,9 @@ import (
 	"syscall"
 	"time"
 
+	"fmt"
+
+	"github.com/bugit/dre-engine/dre-agent/internal/admin"
 	"github.com/bugit/dre-engine/dre-agent/internal/config"
 	"github.com/bugit/dre-engine/dre-agent/internal/forward"
 	"github.com/bugit/dre-engine/dre-agent/internal/metrics"
@@ -31,6 +34,21 @@ func main() {
 	if err := loader.Load(); err != nil {
 		log.Printf("probe load: %v (continuing in mock/stub mode)", err)
 	}
+
+	adminClient := admin.New(cfg.CollectorHTTPAddr)
+	loader.SetMarkerHandler(func(evt ioevent.IOEvent) {
+		pid := evt.PidTgid >> 32
+		switch evt.IsWrite {
+		case 4:
+			if err := adminClient.TriggerSnapshot(ctx, "process-exit", fmt.Sprintf("pid=%d comm=%s", pid, string(evt.Comm[:]))); err != nil {
+				log.Printf("process-exit trigger: %v", err)
+			}
+		case 5:
+			if err := adminClient.TriggerSnapshot(ctx, "sigsegv", fmt.Sprintf("pid=%d sig=%d", pid, evt.Fd)); err != nil {
+				log.Printf("sigsegv trigger: %v", err)
+			}
+		}
+	})
 
 	go probe.MonitorBypass(ctx, loader)
 

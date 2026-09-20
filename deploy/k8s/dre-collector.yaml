@@ -25,7 +25,7 @@ metadata:
   labels:
     app: dre-collector
 spec:
-  replicas: 1
+  replicas: 2
   selector:
     matchLabels:
       app: dre-collector
@@ -34,6 +34,7 @@ spec:
       labels:
         app: dre-collector
     spec:
+      serviceAccountName: dre-collector
       containers:
         - name: dre-collector
           image: bugit/dre-collector:dev
@@ -43,6 +44,20 @@ spec:
               containerPort: 8080
             - name: grpc
               containerPort: 9090
+            - name: metrics
+              containerPort: 8081
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: metrics
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: metrics
+            initialDelaySeconds: 10
+            periodSeconds: 15
           env:
             - name: DRE_DATA_DIR
               value: /var/lib/dre
@@ -53,12 +68,25 @@ spec:
                 secretKeyRef:
                   name: dre-snapshot-key
                   key: key
+            - name: DRE_LEADER_ELECT
+              value: "1"
+            - name: DRE_NAMESPACE
+              value: dre-engine
+            - name: DRE_TRIGGER_RULES_PATH
+              value: /etc/dre/trigger_rules.yaml
+            - name: DRE_METRICS_ADDR
+              value: ":8081"
           volumeMounts:
             - name: data
               mountPath: /var/lib/dre
+            - name: config
+              mountPath: /etc/dre
       volumes:
         - name: data
           emptyDir: {}
+        - name: config
+          configMap:
+            name: dre-collector-config
 ---
 apiVersion: v1
 kind: Service

@@ -2,14 +2,16 @@
   "name": "bugit-dre",
   "displayName": "BugIT DRE Engine",
   "description": "Load and replay DRE snapshots in VS Code",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "publisher": "bugit",
   "engines": {
     "vscode": "^1.85.0"
   },
   "categories": ["Debuggers"],
   "activationEvents": [
-    "onCommand:bugit.loadSnapshot"
+    "onCommand:bugit.loadSnapshot",
+    "onCommand:bugit.stepForward",
+    "onCommand:bugit.stepBackward"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -19,37 +21,62 @@
         "bugit.replayBin": {
           "type": "string",
           "default": "",
-          "description": "Path to dre-replay binary (auto-detected from workspace bin/ if empty)"
+          "description": "Path to dre-replay binary"
         },
         "bugit.snapshotKey": {
           "type": "string",
           "default": "dev-insecure-key-change-me",
           "description": "AES key for decrypting .dre snapshots"
+        },
+        "bugit.replayConfig": {
+          "type": "string",
+          "default": "",
+          "description": "Path to replay.yaml (defaults to deploy/replay.yaml)"
+        },
+        "bugit.delveAddr": {
+          "type": "string",
+          "default": "127.0.0.1:2345",
+          "description": "Delve headless listen address for attach"
         }
       }
     },
     "commands": [
       {
         "command": "bugit.loadSnapshot",
-        "title": "DRE: Load Snapshot"
+        "title": "DRE: Load Snapshot",
+        "icon": "$(debug-restart)"
       },
       {
         "command": "bugit.stepForward",
-        "title": "DRE: Step Forward"
+        "title": "DRE: Step Forward",
+        "icon": "$(debug-step-over)"
       },
       {
         "command": "bugit.stepBackward",
-        "title": "DRE: Step Backward"
+        "title": "DRE: Step Backward",
+        "icon": "$(debug-step-back)"
+      },
+      {
+        "command": "bugit.attachDelve",
+        "title": "DRE: Attach Delve"
+      },
+      {
+        "command": "bugit.stopReplay",
+        "title": "DRE: Stop Replay"
       }
     ],
-    "views": {
-      "explorer": [
-        {
-          "id": "bugitTimeline",
-          "name": "DRE Timeline"
-        }
-      ]
-    }
+    "keybindings": [
+      {
+        "command": "bugit.stepForward",
+        "key": "f10",
+        "when": "activeWebviewPanelId == bugitTimeline"
+      },
+      {
+        "command": "bugit.stepBackward",
+        "key": "shift+f10",
+        "when": "activeWebviewPanelId == bugitTimeline"
+      }
+    ]
   },
   "scripts": {
     "compile": "tsc -p .",

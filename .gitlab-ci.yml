@@ -38,6 +38,7 @@ test:
   image: golang:${GO_VERSION}
   script:
     - go test ./...
+    - go test -v ./dre-replay-cli/...
 
 docker:
   stage: docker
@@ -53,9 +54,29 @@ docker:
 integration:
   stage: integration
   image: golang:${GO_VERSION}-bookworm
+  before_script:
+    - apt-get update && apt-get install -y netcat-openbsd
   script:
     - go test -v ./test/integration/...
     - go test -v ./pkg/drearchive/...
     - go test -v ./dre-collector/internal/server/...
+    - go build -o bin/dre-replay ./dre-replay-cli/cmd/dre-replay
+    - bash test/integration/replay_e2e.sh
+  rules:
+    - when: manual
+
+integration:kind:
+  stage: integration
+  image: golang:${GO_VERSION}-bookworm
+  before_script:
+    - apt-get update && apt-get install -y clang llvm libbpf-dev linux-headers-amd64 docker.io
+    - curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.24.0/kind-linux-amd64 && chmod +x ./kind
+    - go install github.com/cilium/ebpf/cmd/bpf2go@v0.16.0
+  script:
+    - make build-linux docker
+    - ./kind create cluster --name dre-engine || true
+    - make kind-load deploy-kind
+    - bash test/integration/kind_capture_test.sh
+    - bash test/perf/agent_load.sh
   rules:
     - when: manual
