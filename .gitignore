@@ -11,6 +11,7 @@
 *.skel.h
 dre-agent/bpf/vmlinux.h
 dre-agent/bpf/*.bpf.o
+dre-agent/bpf/bpf_*.go
 
 # Go
 /vendor/

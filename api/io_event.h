@@ -4,8 +4,8 @@
 #define DRE_MAX_PAYLOAD_LEN 2048
 #define DRE_COMM_LEN 16
 
-/* PRD §5.1 — kernel event binary structure */
-struct io_event {
+/* PRD §5.1 — kernel event binary structure (dre_io_event avoids vmlinux io_event collision) */
+struct dre_io_event {
     __u64 pid_tgid;        /* PID (top 32) + TID (bottom 32) */
     __u64 timestamp_ns;    /* bpf_ktime_get_ns() */
     __u32 fd;
@@ -15,6 +15,6 @@ struct io_event {
     char  payload[DRE_MAX_PAYLOAD_LEN];
 };
 
-#define DRE_IO_EVENT_SIZE (sizeof(struct io_event))
+#define DRE_IO_EVENT_SIZE (sizeof(struct dre_io_event))
 
 #endif /* DRE_IO_EVENT_H */

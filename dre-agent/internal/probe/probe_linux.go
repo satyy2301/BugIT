@@ -8,19 +8,17 @@ import (
 	"errors"
 	"log"
 	"os"
-	"time"
 
 	"github.com/bugit/dre-engine/api/ioevent"
+	"github.com/bugit/dre-engine/dre-agent/bpf"
+	"github.com/bugit/dre-engine/dre-agent/internal/metrics"
 	"github.com/cilium/ebpf/ringbuf"
 )
 
 type Loader struct {
-	reader *ringbuf.Reader
-	bypass *ebpfMap
-}
-
-type ebpfMap struct {
-	fd int
+	reader  *ringbuf.Reader
+	coll    *bpf.Collection
+	bypass  bool
 }
 
 func NewLoader() *Loader { return &Loader{} }
@@ -30,14 +28,30 @@ func (l *Loader) Load() error {
 		log.Println("DRE_SKIP_BPF=1, running without eBPF programs")
 		return nil
 	}
-	// bpf2go-generated objects are produced by `make bpf` on Linux.
-	// Until then, agent runs in mock event mode via DRE_SKIP_BPF.
-	return errors.New("eBPF objects not built; run `make bpf` or set DRE_SKIP_BPF=1")
+
+	coll, err := bpf.LoadCollection()
+	if err != nil {
+		return errors.New("eBPF objects not built; run `make bpf` on Linux/WSL2 or set DRE_SKIP_BPF=1: " + err.Error())
+	}
+	l.coll = coll
+	reader, err := ringbuf.NewReader(coll.EventsMap())
+	if err != nil {
+		coll.Close()
+		return err
+	}
+	l.reader = reader
+	log.Println("eBPF programs loaded and tracepoints attached")
+	return nil
 }
 
 func (l *Loader) Close() error {
 	if l.reader != nil {
 		l.reader.Close()
+		l.reader = nil
+	}
+	if l.coll != nil {
+		l.coll.Close()
+		l.coll = nil
 	}
 	return nil
 }
@@ -56,12 +70,14 @@ func (l *Loader) Run(ctx context.Context, out chan<- ioevent.IOEvent) error {
 				if errors.Is(err, ringbuf.ErrClosed) {
 					return nil
 				}
+				metrics.RingbufDrops.Inc()
 				continue
 			}
 			evt, err := decodeRecord(record.RawSample)
 			if err != nil {
 				continue
 			}
+			metrics.EventsEmitted.Inc()
 			out <- evt
 		}
 	}
@@ -83,5 +99,19 @@ func decodeRecord(raw []byte) (ioevent.IOEvent, error) {
 }
 
 func (l *Loader) SetBypass(enabled bool) {
-	_ = enabled
+	l.bypass = enabled
+	if l.coll != nil {
+		if err := l.coll.SetBypass(enabled); err != nil {
+			log.Printf("set bypass: %v", err)
+		}
+	}
+	if enabled {
+		metrics.BypassMode.Set(1)
+	} else {
+		metrics.BypassMode.Set(0)
+	}
+}
+
+func (l *Loader) Bypassed() bool {
+	return l.bypass
 }

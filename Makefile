@@ -1,4 +1,4 @@
-.PHONY: all bpf build test lint docker kind-up deploy-kind clean proto demo-snapshot
+.PHONY: all bpf build build-linux test lint docker kind-up kind-load deploy-kind fetch-snapshot clean proto demo-snapshot
 
 GO       ?= go
 CLANG    ?= clang
@@ -16,13 +16,25 @@ COLLECTOR_IMAGE := bugit/dre-collector:dev
 
 all: build
 
-bpf:
+VMLINUX_HDR := dre-agent/bpf/vmlinux.h
+
+bpf: $(VMLINUX_HDR)
 	@if [ "$(OS)" = "Windows_NT" ] 2>/dev/null || [ "$$OS" = "Windows_NT" ]; then \
 		echo "Skipping bpf build on Windows (run on Linux or WSL2)"; \
 	else \
 		$(BPF2GO) -cc $(CLANG) -cflags "-O2 -g -Wall" -target amd64,arm64 \
-			bpf dre-agent/bpf/dre_probes.bpf.c -- -I./api; \
+			-go-package bpf -output-dir dre-agent/bpf \
+			bpf dre-agent/bpf/dre_probes.bpf.c -- -I./api -I./dre-agent/bpf; \
 	fi
+
+$(VMLINUX_HDR):
+	@if [ "$(OS)" = "Windows_NT" ] 2>/dev/null || [ "$$OS" = "Windows_NT" ]; then \
+		echo "Skipping vmlinux.h generation on Windows"; \
+	elif [ ! -f "$(VMLINUX_HDR)" ]; then \
+		bash scripts/gen-vmlinux.sh "$(VMLINUX_HDR)"; \
+	fi
+
+build-linux: bpf build
 
 proto:
 	$(GO) install google.golang.org/protobuf/cmd/protoc-gen-go@latest
@@ -53,11 +65,20 @@ docker:
 kind-up:
 	bash scripts/kind-up.sh
 
+kind-load:
+	kind load docker-image $(AGENT_IMAGE) --name dre-engine
+	kind load docker-image $(COLLECTOR_IMAGE) --name dre-engine
+
 deploy-kind:
 	kubectl apply -f deploy/k8s/namespace.yaml
 	kubectl apply -f deploy/k8s/dre-collector.yaml
 	kubectl apply -f deploy/k8s/dre-agent.yaml
+	kubectl apply -f deploy/k8s/nginx-sample.yaml
 	kubectl rollout status deployment/dre-collector -n dre-engine --timeout=120s
+	kubectl rollout status deployment/nginx-sample -n dre-engine --timeout=120s
+
+fetch-snapshot:
+	@bash scripts/fetch-snapshot.sh
 
 clock-shim:
 	$(CLANG) -shared -fPIC -O2 -o $(BIN_DIR)/clock_shim.so dre-replay-cli/shim/clock_shim.c -ldl

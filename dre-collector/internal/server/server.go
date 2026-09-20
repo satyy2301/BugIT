@@ -6,6 +6,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 
 	"github.com/bugit/dre-engine/api/grpcapi"
@@ -127,6 +128,42 @@ func (c *Collector) Start(grpcAddr, httpAddr string) error {
 		resp, _ := c.ListSnapshots(r.Context(), &grpcapi.Empty{})
 		_ = json.NewEncoder(w).Encode(resp)
 	})
+	mux.HandleFunc("/v1/snapshots/", func(w http.ResponseWriter, r *http.Request) {
+		c.serveSnapshotDownload(w, r)
+	})
 	log.Printf("dre-collector HTTP admin on %s", httpAddr)
 	return http.ListenAndServe(httpAddr, mux)
+}
+
+func (c *Collector) serveSnapshotDownload(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	rest := strings.TrimPrefix(r.URL.Path, "/v1/snapshots/")
+	if !strings.HasSuffix(rest, "/download") {
+		http.NotFound(w, r)
+		return
+	}
+	id := strings.TrimSuffix(strings.TrimSuffix(rest, "/download"), "/")
+	if id == "" {
+		http.NotFound(w, r)
+		return
+	}
+
+	c.mu.RLock()
+	var path string
+	for _, s := range c.snapshots {
+		if s.ID == id {
+			path = s.Path
+			break
+		}
+	}
+	c.mu.RUnlock()
+	if path == "" {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", "application/octet-stream")
+	http.ServeFile(w, r, path)
 }

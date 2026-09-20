@@ -72,12 +72,22 @@ function resolveReplayBin(): string {
 async function loadSnapshot() {
   const folders = vscode.workspace.workspaceFolders;
   const defaultDir = folders?.[0]?.uri;
-  const fixture = defaultDir ? vscode.Uri.joinPath(defaultDir, 'test', 'fixtures', 'demo-checkout-500.dre') : undefined;
+  const liveCapture = defaultDir ? vscode.Uri.file(path.join(defaultDir.fsPath, 'latest.dre')) : undefined;
+  const demoFixture = defaultDir
+    ? vscode.Uri.joinPath(defaultDir, 'test', 'fixtures', 'demo-checkout-500.dre')
+    : undefined;
+  const defaultUri =
+    liveCapture && fs.existsSync(liveCapture.fsPath)
+      ? liveCapture
+      : demoFixture && fs.existsSync(demoFixture.fsPath)
+        ? demoFixture
+        : defaultDir;
 
   const uris = await vscode.window.showOpenDialog({
     canSelectMany: false,
     filters: { 'DRE Snapshots': ['dre'] },
-    defaultUri: fixture && fs.existsSync(fixture.fsPath) ? fixture : defaultDir,
+    defaultUri,
+    title: 'Load DRE snapshot (use make fetch-snapshot for live captures from kind)',
   });
   if (!uris?.length) {
     return;

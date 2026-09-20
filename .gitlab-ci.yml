@@ -28,7 +28,7 @@ build:
     - apt-get update && apt-get install -y clang llvm libbpf-dev linux-headers-amd64
     - go install github.com/cilium/ebpf/cmd/bpf2go@v0.16.0
   script:
-    - make bpf build
+    - make build-linux
   artifacts:
     paths:
       - bin/

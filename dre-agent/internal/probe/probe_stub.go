@@ -21,3 +21,5 @@ func (l *Loader) Run(ctx context.Context, out chan<- ioevent.IOEvent) error {
 }
 
 func (l *Loader) SetBypass(enabled bool) {}
+
+func (l *Loader) Bypassed() bool { return false }

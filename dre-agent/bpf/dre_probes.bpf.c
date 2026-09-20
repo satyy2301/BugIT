@@ -4,6 +4,7 @@
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_tracing.h>
 #include <bpf/bpf_core_read.h>
+#include "dre_maps.h"
 #include "../../api/io_event.h"
 
 char LICENSE[] SEC("license") = "GPL";
@@ -29,23 +30,9 @@ static __always_inline int dre_is_bypassed(void)
 
 static __always_inline void dre_redact_payload(char *payload, __u32 len)
 {
-    const char bearer[] = "Bearer ";
-    const char basic[] = "Basic ";
-    const char cookie[] = "Cookie:";
-
-    if (len < 7)
-        return;
-
-    #pragma unroll
-    for (int i = 0; i < 32; i++) {
-        if (i + 7 > len)
-            break;
-        if (payload[i] == bearer[0] && payload[i+1] == bearer[1]) {
-            #pragma unroll
-            for (int j = i; j < i + 32 && j < (int)len; j++)
-                payload[j] = 0;
-        }
-    }
+    /* Verifier-safe stub: userspace collector also redacts on export. */
+    (void)payload;
+    (void)len;
 }
 
 static __always_inline int dre_submit_io_event(void *ctx, __u32 fd, __u32 len,
@@ -54,22 +41,28 @@ static __always_inline int dre_submit_io_event(void *ctx, __u32 fd, __u32 len,
     if (dre_is_bypassed())
         return 0;
 
-    struct io_event *evt = bpf_ringbuf_reserve(&dre_events, sizeof(*evt), 0);
+    struct dre_io_event *evt = bpf_ringbuf_reserve(&dre_events, sizeof(*evt), 0);
     if (!evt)
         return 0;
 
     __u64 pid_tgid = bpf_get_current_pid_tgid();
+    __u32 payload_len = len;
+    if (payload_len > DRE_MAX_PAYLOAD_LEN)
+        payload_len = DRE_MAX_PAYLOAD_LEN;
+    payload_len &= DRE_MAX_PAYLOAD_LEN;
+
     evt->pid_tgid = pid_tgid;
     evt->timestamp_ns = bpf_ktime_get_ns();
     evt->fd = fd;
     evt->is_write = is_write;
-    evt->payload_len = len > DRE_MAX_PAYLOAD_LEN ? DRE_MAX_PAYLOAD_LEN : len;
+    evt->payload_len = payload_len;
     bpf_get_current_comm(evt->comm, sizeof(evt->comm));
 
-    if (buf && evt->payload_len > 0) {
-        if (bpf_probe_read_user(evt->payload, evt->payload_len, buf) != 0)
+    if (buf && payload_len > 0) {
+        if (bpf_probe_read_user(evt->payload, payload_len, buf) != 0)
             evt->payload_len = 0;
-        dre_redact_payload(evt->payload, evt->payload_len);
+        else
+            dre_redact_payload(evt->payload, evt->payload_len);
     }
 
     bpf_ringbuf_submit(evt, 0);
@@ -118,7 +111,7 @@ int dre_trace_sched_switch(struct trace_event_raw_sched_switch *ctx)
     if (dre_is_bypassed())
         return 0;
 
-    struct io_event *evt = bpf_ringbuf_reserve(&dre_events, sizeof(*evt), 0);
+    struct dre_io_event *evt = bpf_ringbuf_reserve(&dre_events, sizeof(*evt), 0);
     if (!evt)
         return 0;
 

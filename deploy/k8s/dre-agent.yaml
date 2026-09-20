@@ -35,23 +35,37 @@ spec:
                 fieldRef:
                   fieldPath: spec.nodeName
             - name: DRE_SKIP_BPF
-              value: "1"
+              value: "0"
             - name: DRE_MOCK_MODE
               value: "0"
+            - name: DRE_MEMORY_LIMIT_BYTES
+              value: "536870912"
           volumeMounts:
             - name: bpf
               mountPath: /sys/fs/bpf
+            - name: tracefs
+              mountPath: /sys/kernel/tracing
+            - name: debugfs
+              mountPath: /sys/kernel/debug
           resources:
             limits:
-              memory: 128Mi
+              memory: 512Mi
             requests:
               cpu: 50m
-              memory: 64Mi
+              memory: 128Mi
       volumes:
         - name: bpf
           hostPath:
             path: /sys/fs/bpf
             type: DirectoryOrCreate
+        - name: tracefs
+          hostPath:
+            path: /sys/kernel/tracing
+            type: Directory
+        - name: debugfs
+          hostPath:
+            path: /sys/kernel/debug
+            type: Directory
 ---
 apiVersion: v1
 kind: ServiceAccount

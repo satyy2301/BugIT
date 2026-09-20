@@ -46,3 +46,21 @@ go run ./scripts/generate-demo-snapshot -out test/fixtures/demo-checkout-500.dre
 ## Live mock capture
 
 Set `DRE_MOCK_SCENARIO=checkout_500` on `dre-agent` to emit the same scenario into a live collector.
+
+## Live eBPF capture (kind / WSL2)
+
+On Linux or WSL2 with BTF kernel:
+
+```bash
+make build-linux
+bash scripts/kind-up.sh
+make docker kind-load deploy-kind
+kubectl port-forward -n dre-engine svc/dre-collector 8080:8080 &
+kubectl exec -n dre-engine deploy/nginx-sample -- wget -qO- http://127.0.0.1/error || true
+bin/dre-cli trigger --collector http://localhost:8080
+make fetch-snapshot    # writes ./latest.dre
+```
+
+In VS Code: **DRE: Load Snapshot** — picker prefers `latest.dre` when present (live capture) over the offline demo fixture.
+
+Replay proxy matches HTTP requests by `METHOD path` when possible (not only strict event order).

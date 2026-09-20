@@ -1,0 +1,59 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nginx-sample-config
+  namespace: dre-engine
+data:
+  default.conf: |
+    server {
+      listen 80;
+      location / {
+        return 200 'ok\n';
+      }
+      location /error {
+        return 500 'internal server error\n';
+      }
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-sample
+  namespace: dre-engine
+  labels:
+    app: nginx-sample
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nginx-sample
+  template:
+    metadata:
+      labels:
+        app: nginx-sample
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:1.25-alpine
+          ports:
+            - containerPort: 80
+          volumeMounts:
+            - name: config
+              mountPath: /etc/nginx/conf.d/default.conf
+              subPath: default.conf
+      volumes:
+        - name: config
+          configMap:
+            name: nginx-sample-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx-sample
+  namespace: dre-engine
+spec:
+  selector:
+    app: nginx-sample
+  ports:
+    - port: 80
+      targetPort: 80

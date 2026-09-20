@@ -6,7 +6,7 @@ agent:
     requests:
       cpu: 50m
       memory: 64Mi
-  skipBpf: true
+  skipBpf: false
 
 collector:
   image: bugit/dre-collector:dev

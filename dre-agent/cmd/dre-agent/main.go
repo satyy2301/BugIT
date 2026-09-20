@@ -32,6 +32,8 @@ func main() {
 		log.Printf("probe load: %v (continuing in mock/stub mode)", err)
 	}
 
+	go probe.MonitorBypass(ctx, loader)
+
 	go func() {
 		if err := loader.Run(ctx, events); err != nil {
 			log.Printf("probe run: %v", err)
