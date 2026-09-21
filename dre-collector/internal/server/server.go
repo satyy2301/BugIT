@@ -3,16 +3,19 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"log"
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/bugit/dre-engine/api/grpcapi"
+	"github.com/bugit/dre-engine/api/ioevent"
 	"github.com/bugit/dre-engine/api/manifest"
 	"github.com/bugit/dre-engine/dre-collector/internal/buffer"
 	"github.com/bugit/dre-engine/dre-collector/internal/ingest"
@@ -23,10 +26,21 @@ import (
 	"github.com/bugit/dre-engine/dre-collector/internal/trigger"
 	"github.com/bugit/dre-engine/dre-collector/internal/vector"
 	"github.com/bugit/dre-engine/pkg/grpctls"
+	"github.com/bugit/dre-engine/pkg/sourcemap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/health"
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 )
+
+type LocalHooks struct {
+	IncidentBuilder func(events []ioevent.IOEvent) *manifest.Incident
+	SourceMap       *sourcemap.Store
+	ReplayWriter    func(path, root string, events []ioevent.IOEvent) error
+	SnapshotDir     string
+	LatestLink      string
+	ReplayPath      string
+	ProjectRoot     string
+}
 
 type Collector struct {
 	grpcapi.UnimplementedEventIngestServer
@@ -39,6 +53,7 @@ type Collector struct {
 	triggers *trigger.Engine
 	storage  storage.Uploader
 	httpBase string
+	local    LocalHooks
 
 	mu        sync.RWMutex
 	snapshots []*grpcapi.SnapshotInfo
@@ -65,9 +80,21 @@ func New(dataDir, cluster, key string, uploader storage.Uploader) *Collector {
 	return c
 }
 
+func (c *Collector) SetLocalHooks(h LocalHooks) {
+	c.local = h
+	if c.exporter != nil {
+		c.exporter.SetSourceMap(h.SourceMap)
+	}
+}
+
 func (c *Collector) captureSnapshot(trig manifest.Trigger) {
 	start := time.Now()
 	events := c.buf.Snapshot()
+	if c.local.IncidentBuilder != nil {
+		if inc := c.local.IncidentBuilder(bufferEventsToNative(events)); inc != nil {
+			c.exporter.SetIncident(inc)
+		}
+	}
 	graph := c.vector.Graph()
 	var redactLog manifest.RedactionLog
 	for i := range events {
@@ -118,8 +145,43 @@ func (c *Collector) captureSnapshot(trig manifest.Trigger) {
 	metrics.SnapshotsExported.Inc()
 	metrics.SnapshotExportDuration.Observe(time.Since(start).Seconds())
 	log.Printf("snapshot written: %s events=%d storage=%s", path, m.EventCount, info.StorageUri)
+	c.postProcessSnapshot(path, events)
 }
 
+func (c *Collector) postProcessSnapshot(path string, events []buffer.Event) {
+	if c.local.SnapshotDir == "" {
+		return
+	}
+	_ = os.MkdirAll(c.local.SnapshotDir, 0o755)
+	base := filepath.Base(path)
+	dest := filepath.Join(c.local.SnapshotDir, base)
+	if path != dest {
+		data, err := os.ReadFile(path)
+		if err == nil {
+			_ = os.WriteFile(dest, data, 0o644)
+			path = dest
+		}
+	}
+	if c.local.LatestLink != "" {
+		data, err := os.ReadFile(path)
+		if err == nil {
+			_ = os.WriteFile(c.local.LatestLink, data, 0o644)
+		}
+	}
+	if c.local.ReplayPath != "" && len(events) > 0 && c.local.ReplayWriter != nil {
+		if err := c.local.ReplayWriter(c.local.ReplayPath, c.local.ProjectRoot, bufferEventsToNative(events)); err != nil {
+			log.Printf("replay config: %v", err)
+		}
+	}
+}
+
+func bufferEventsToNative(events []buffer.Event) []ioevent.IOEvent {
+	out := make([]ioevent.IOEvent, len(events))
+	for i := range events {
+		out[i] = events[i].IOEvent
+	}
+	return out
+}
 const timeRFC3339 = "2006-01-02T15:04:05Z"
 
 func (c *Collector) StreamEvents(stream grpcapi.EventIngest_StreamEventsServer) error {
@@ -197,6 +259,7 @@ func (c *Collector) Run(ctx context.Context, grpcAddr, httpAddr string) error {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ready"))
 	})
+	mux.HandleFunc("/v1/events", c.serveIngestEvents)
 	mux.HandleFunc("/v1/trigger", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -233,6 +296,55 @@ func (c *Collector) Run(ctx context.Context, grpcAddr, httpAddr string) error {
 	defer cancel()
 	_ = httpSrv.Shutdown(shutdownCtx)
 	return nil
+}
+
+func (c *Collector) serveIngestEvents(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	var req struct {
+		NodeID string `json:"node_id"`
+		Events []struct {
+			TimestampNs uint64 `json:"timestamp_ns"`
+			Fd          uint32 `json:"fd"`
+			IsWrite     uint8  `json:"is_write"`
+			Comm        string `json:"comm"`
+			Payload     string `json:"payload"`
+		} `json:"events"`
+	}
+	if err := json.Unmarshal(body, &req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	nodeID := req.NodeID
+	if nodeID == "" {
+		nodeID = "local-dev"
+	}
+	for _, item := range req.Events {
+		var evt ioevent.IOEvent
+		evt.TimestampNs = item.TimestampNs
+		if evt.TimestampNs == 0 {
+			evt.TimestampNs = uint64(time.Now().UnixNano())
+		}
+		evt.Fd = item.Fd
+		evt.IsWrite = item.IsWrite
+		payload := []byte(item.Payload)
+		if len(payload) > ioevent.MaxPayloadLen {
+			payload = payload[:ioevent.MaxPayloadLen]
+		}
+		evt.PayloadLen = uint32(len(payload))
+		copy(evt.Payload[:], payload)
+		copy(evt.Comm[:], []byte(item.Comm))
+		c.ingest.IngestNative(r.Context(), evt, nodeID)
+	}
+	w.WriteHeader(http.StatusAccepted)
+	_, _ = w.Write([]byte(`{"status":"ok"}`))
 }
 
 func (c *Collector) serveSnapshotDownload(w http.ResponseWriter, r *http.Request) {

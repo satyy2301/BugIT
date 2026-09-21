@@ -1,30 +1,118 @@
 {
   "name": "bugit-dre",
   "displayName": "BugIT DRE Engine",
-  "description": "Load and replay DRE snapshots in VS Code",
-  "version": "0.3.0",
+  "description": "Plug-and-play local bug capture and replay for any project",
+  "version": "1.0.0",
   "publisher": "bugit",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://gitlab.com/bugit/dre-engine.git"
+  },
+  "bugs": {
+    "url": "https://gitlab.com/bugit/dre-engine/-/issues"
+  },
+  "homepage": "https://gitlab.com/bugit/dre-engine#readme",
   "engines": {
     "vscode": "^1.85.0"
   },
-  "categories": ["Debuggers"],
+  "categories": ["Debuggers", "Other"],
+  "keywords": ["debug", "replay", "bug", "capture", "dre"],
   "activationEvents": [
+    "onStartupFinished",
     "onCommand:bugit.loadSnapshot",
     "onCommand:bugit.fetchLatest",
     "onCommand:bugit.loadFromCollector",
     "onCommand:bugit.stepForward",
     "onCommand:bugit.stepBackward",
-    "onCommand:bugit.startReplayDebug"
+    "onCommand:bugit.attachDelve",
+    "onCommand:bugit.startReplayDebug",
+    "onCommand:bugit.stopReplay",
+    "onCommand:bugit.openSourceAtEvent",
+    "onCommand:bugit.openLatest",
+    "onCommand:bugit.startCapture"
   ],
   "main": "./out/extension.js",
   "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "bugit-sidebar",
+          "title": "BugIT",
+          "icon": "$(debug-alt)"
+        }
+      ]
+    },
+    "views": {
+      "bugit-sidebar": [
+        {
+          "id": "bugit.actions",
+          "name": "Actions"
+        }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "bugit.startCapture",
+          "when": "view == bugit.actions",
+          "group": "navigation@1"
+        },
+        {
+          "command": "bugit.openLatest",
+          "when": "view == bugit.actions",
+          "group": "navigation@2"
+        },
+        {
+          "command": "bugit.loadSnapshot",
+          "when": "view == bugit.actions",
+          "group": "navigation@3"
+        }
+      ]
+    },
+    "walkthroughs": [
+      {
+        "id": "bugit.getStarted",
+        "title": "Get Started with BugIT",
+        "description": "Capture and replay bugs locally in minutes",
+        "steps": [
+          {
+            "id": "installCli",
+            "title": "Install BugIT CLI",
+            "description": "Run [npm install -g @bugit/cli](command:terminal.open?%5B%22npm%20install%20-g%20%40bugit%2Fcli%22%5D) in a terminal.",
+            "media": { "markdown": "resources/walkthrough-install.md" }
+          },
+          {
+            "id": "tryDemo",
+            "title": "Try demo snapshot",
+            "description": "Load the bundled checkout demo to see replay in action.",
+            "completionEvents": ["onCommand:bugit.loadSnapshot"],
+            "media": { "markdown": "resources/walkthrough-demo.md" }
+          },
+          {
+            "id": "capture",
+            "title": "Capture in your project",
+            "description": "Run **DRE: Start Capture** or `bugit capture -- npm run dev`.",
+            "completionEvents": ["onCommand:bugit.startCapture"],
+            "media": { "markdown": "resources/walkthrough-capture.md" }
+          },
+          {
+            "id": "jumpSource",
+            "title": "Jump to source",
+            "description": "Click an event, then run **DRE: Open Source at Current Event**.",
+            "completionEvents": ["onCommand:bugit.openSourceAtEvent"],
+            "media": { "markdown": "resources/walkthrough-source.md" }
+          }
+        ]
+      }
+    ],
     "configuration": {
       "title": "BugIT DRE",
       "properties": {
         "bugit.replayBin": {
           "type": "string",
           "default": "",
-          "description": "Path to dre-replay binary"
+          "description": "Path to dre-replay binary (defaults to bundled binary)"
         },
         "bugit.snapshotKey": {
           "type": "string",
@@ -34,17 +122,22 @@
         "bugit.replayConfig": {
           "type": "string",
           "default": "",
-          "description": "Path to replay.yaml (defaults to deploy/replay.yaml)"
+          "description": "Path to replay.yaml (defaults to .bugit/replay.yaml)"
         },
         "bugit.collectorUrl": {
           "type": "string",
-          "default": "http://localhost:8080",
+          "default": "http://127.0.0.1:28080",
           "description": "DRE collector HTTP base URL for fetch/list"
         },
         "bugit.delveAddr": {
           "type": "string",
           "default": "127.0.0.1:2345",
           "description": "Delve headless listen address for attach"
+        },
+        "bugit.appBinary": {
+          "type": "string",
+          "default": "",
+          "description": "Path to your app binary for Delve during replay (Go apps)"
         }
       }
     },
@@ -53,6 +146,16 @@
         "command": "bugit.loadSnapshot",
         "title": "DRE: Load Snapshot",
         "icon": "$(debug-restart)"
+      },
+      {
+        "command": "bugit.openLatest",
+        "title": "DRE: Open Latest Snapshot",
+        "icon": "$(history)"
+      },
+      {
+        "command": "bugit.startCapture",
+        "title": "DRE: Start Capture",
+        "icon": "$(record)"
       },
       {
         "command": "bugit.fetchLatest",
@@ -125,6 +228,7 @@
   "scripts": {
     "compile": "tsc -p .",
     "watch": "tsc -watch -p .",
+    "package": "npm run compile && npx @vscode/vsce package --no-dependencies",
     "postinstall": "node -e \"const fs=require('fs');const p='node_modules/mermaid/dist/mermaid.min.js';if(fs.existsSync(p)){fs.mkdirSync('media',{recursive:true});fs.copyFileSync(p,'media/mermaid.min.js');}\""
   },
   "dependencies": {
@@ -135,6 +239,7 @@
   "devDependencies": {
     "@types/node": "^20.11.0",
     "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^3.2.1",
     "typescript": "^5.3.3"
   }
 }

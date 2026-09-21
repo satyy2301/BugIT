@@ -37,5 +37,26 @@
         "failed_step": { "type": "string" }
       }
     }
+  },
+  "definitions": {
+    "sourceMap": {
+      "type": "object",
+      "properties": {
+        "events": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["index", "file", "line"],
+            "properties": {
+              "index": { "type": "integer" },
+              "file": { "type": "string" },
+              "line": { "type": "integer" },
+              "column": { "type": "integer" },
+              "function": { "type": "string" }
+            }
+          }
+        }
+      }
+    }
   }
 }

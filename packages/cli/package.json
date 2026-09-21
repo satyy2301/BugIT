@@ -1,0 +1,28 @@
+{
+  "name": "@bugit/cli",
+  "version": "1.0.0",
+  "description": "BugIT plug-and-play local bug capture and replay CLI",
+  "bin": {
+    "bugit": "bin/bugit.js"
+  },
+  "files": [
+    "bin/",
+    "README.md"
+  ],
+  "keywords": ["bugit", "debug", "replay", "capture"],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://gitlab.com/bugit/dre-engine.git",
+    "directory": "packages/cli"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "optionalDependencies": {
+    "@bugit/cli-win32-x64": "1.0.0",
+    "@bugit/cli-linux-x64": "1.0.0",
+    "@bugit/cli-darwin-arm64": "1.0.0",
+    "@bugit/cli-darwin-x64": "1.0.0"
+  }
+}

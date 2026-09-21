@@ -1,63 +1,66 @@
-# BugIT — DRE-Engine
+# BugIT — DRE Engine
 
-Deterministic Replay Environment for Kubernetes microservices. Captures kernel-level I/O and scheduling events via eBPF, aggregates them cluster-wide, and replays incidents locally.
+Deterministic Replay Environment for local development and Kubernetes microservices. **Zero-code capture** on Windows/macOS/Linux, plus eBPF cluster capture for production.
+
+## Quick Start (local — any OS)
+
+```powershell
+npm install -g @bugit/cli
+cd your-project
+bugit capture -- npm run dev
+# reproduce bug, Ctrl+C
+bugit replay
+```
+
+VS Code: install **BugIT DRE Engine** extension → **DRE: Open Latest Snapshot**
+
+Full walkthrough: [Local quickstart](docs/local-quickstart.md)
+
+Example project:
+
+```powershell
+cd C:\Users\satyy\OneDrive\Desktop\satyam\MERN\PlacementIQ\backend
+bugit capture -- npm run dev
+```
+
+## Build from source
+
+```bash
+make build          # bugit, dre-replay, dre-collector, dre-cli, dre-agent
+make demo-snapshot  # test/fixtures/demo-checkout-500.dre
+```
+
+Windows: eBPF capture needs WSL2; **local capture works natively**.
 
 ## Components
 
 | Component | Description |
 |-----------|-------------|
-| `dre-agent` | eBPF DaemonSet + userspace loader |
-| `dre-collector` | Event aggregator, vector clock engine, `.dre` exporter |
-| `dre-replay` | Local offline replay proxy and debugger sync API |
-| `dre-cli` | Trigger and download snapshots |
-| `extensions/vscode` | VS Code snapshot loader and timeline panel |
+| `bugit` | Unified CLI — capture, replay, doctor |
+| `dre-replay` | Local replay proxy + debugger sync |
+| `dre-collector` | Event aggregator + `.dre` export |
+| `dre-agent` | eBPF capture (Linux/K8s team mode) |
+| `extensions/vscode` | Timeline UI, jump-to-source, walkthrough |
 
-## Quick Start (Linux + kind)
-
-Run on **WSL2 Ubuntu** or Linux (eBPF capture does not run on Windows-native).
+## Team / production (K8s + eBPF)
 
 ```bash
 bash scripts/setup-dev.sh
-make build-linux          # bpf + Go binaries
-bash scripts/kind-up.sh
-make docker
-make kind-load            # load images into kind
-make deploy-kind
-kubectl port-forward -n dre-engine svc/dre-collector 18081:8080 &
-kubectl exec -n dre-engine deploy/nginx-sample -- wget -qO- http://127.0.0.1/error || true
-DRE_COLLECTOR_HTTP=http://localhost:18081 bin/dre-cli trigger --collector http://localhost:18081
-DRE_COLLECTOR_HTTP=http://localhost:18081 make fetch-snapshot   # copies latest .dre to ./latest.dre
+make build-linux docker kind-load deploy-kind
 ```
 
-On Windows, port `8080` is often reserved — use `18081` (or any free local port) for port-forward.
+See [EKS deploy](docs/runbooks/eks-deploy.md). Use `bugit capture --mode cluster` for runbook pointer.
 
-Integration smoke test (kind cluster required):
-
-```bash
-bash test/integration/kind_capture_test.sh
-```
-
-## Demo snapshot (try first)
+## Demo snapshot
 
 ```powershell
 go run ./scripts/generate-demo-snapshot -out test/fixtures/demo-checkout-500.dre
-# VS Code: extensions/vscode → F5 → DRE: Load Snapshot → pick demo-checkout-500.dre
-```
-
-See [Demo walkthrough](docs/demo-walkthrough.md) for what the bug is and how replay works.
-
-## Build
-
-```bash
-make build          # all Go binaries
-make bpf            # eBPF objects (Linux only)
-make demo-snapshot  # generate test/fixtures/demo-checkout-500.dre
-make test
+# VS Code: DRE: Load Snapshot
 ```
 
 ## Documentation
 
-- [PRD](docs/PRD.md)
-- [PRD v2 (Phase 1+)](docs/PRD-v2.md)
+- [Local quickstart](docs/local-quickstart.md) — **start here**
 - [Demo walkthrough](docs/demo-walkthrough.md)
+- [PRD v2](docs/PRD-v2.md)
 - [Dev environments](docs/dev-environments.md)

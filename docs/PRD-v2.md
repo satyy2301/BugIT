@@ -1,6 +1,6 @@
 # BugIT DRE-Engine — PRD v2.0 (Post-Prototype)
 
-**Status:** Phase 1 complete, Phase 2 complete, Phase 3 complete, Phase 4 complete, Phase 5 complete  
+**Status:** Phase 1 complete, Phase 2 complete, Phase 3 complete, Phase 4 complete, Phase 5 complete, Phase 6 complete  
 **Target:** Q1 2027 beta
 
 ## Phase 1 — Real capture
@@ -88,6 +88,27 @@
 - [x] Runbooks for EKS deploy, GKE deploy, bypass, snapshot failure, rollback
 
 **Verify:** `go test ./dre-replay-cli/...`, `cd extensions/vscode && npm run compile`, follow `docs/runbooks/eks-deploy.md`
+
+## Phase 6 — Local plug-and-play (any OS)
+
+| Req ID | Requirement | Status |
+|--------|-------------|--------|
+| REQ-LOC-001 | Unified `bugit` CLI (`capture`, `replay`, `doctor`) | Done — `bugit-cli/cmd/bugit` |
+| REQ-LOC-002 | Zero-code HTTP capture on Windows/macOS/Linux | Done — `pkg/recordproxy`, `dre-collector/pkg/localcapture` |
+| REQ-LOC-003 | `.bugit/` project layout + auto replay.yaml | Done — `pkg/project` |
+| REQ-LOC-004 | HTTP ingest + local collector daemon | Done — `POST /v1/events`, embedded collector |
+| REQ-LOC-005 | Source map + jump-to-source | Done — `source_map.json`, Node CDP, VS Code `openSourceAtEvent` |
+| REQ-LOC-006 | VS Code Marketplace packaging | Done — walkthrough, bundled binary CI, `@bugit/cli` npm |
+| REQ-LOC-007 | K8s path preserved as team mode | Done — `bugit capture --mode cluster` |
+
+**Acceptance checklist**
+
+- [ ] `npm i -g @bugit/cli` on Windows → `bugit capture` on Express app → `.dre` created
+- [ ] VS Code extension loads `.bugit/latest.dre` without repo clone
+- [ ] Click event opens source file at line (Node capture)
+- [ ] Existing K8s capture still passes `kind_capture_test.sh`
+
+**Verify:** `make build`, `bugit doctor`, `docs/local-quickstart.md`, `go test ./dre-collector/pkg/localcapture/...`
 
 ## Later phases
 

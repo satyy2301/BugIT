@@ -29,9 +29,13 @@ build:
     - go install github.com/cilium/ebpf/cmd/bpf2go@v0.16.0
   script:
     - make build-linux
+    - GOOS=windows GOARCH=amd64 go build -o bin/bugit.exe ./bugit-cli/cmd/bugit
+    - GOOS=windows GOARCH=amd64 go build -o bin/dre-replay.exe ./dre-replay-cli/cmd/dre-replay
+    - bash scripts/bundle-extension-binaries.sh
   artifacts:
     paths:
       - bin/
+      - extensions/vscode/bin/
 
 test:
   stage: test
@@ -45,6 +49,16 @@ test:vscode:
   image: node:20-bookworm
   script:
     - cd extensions/vscode && npm ci && npm run compile && node out/collector.test.js
+
+package:vscode:
+  stage: test
+  image: node:20-bookworm
+  needs: [build]
+  script:
+    - cd extensions/vscode && npm ci && npm run package
+  artifacts:
+    paths:
+      - extensions/vscode/*.vsix
 
 docker:
   stage: docker

@@ -5,11 +5,12 @@ CLANG    ?= clang
 LLVM_STRIP ?= llvm-strip
 BPF2GO   ?= go run github.com/cilium/ebpf/cmd/bpf2go@v0.16.0
 
-BIN_DIR  := bin
+	BIN_DIR  := bin
 AGENT_BIN := $(BIN_DIR)/dre-agent
 COLLECTOR_BIN := $(BIN_DIR)/dre-collector
 CLI_BIN := $(BIN_DIR)/dre-cli
 REPLAY_BIN := $(BIN_DIR)/dre-replay
+BUGIT_BIN := $(BIN_DIR)/bugit
 
 AGENT_IMAGE := bugit/dre-agent:dev
 COLLECTOR_IMAGE := bugit/dre-collector:dev
@@ -48,6 +49,7 @@ build:
 	@$(GO) build -o $(COLLECTOR_BIN) ./dre-collector/cmd/dre-collector
 	@$(GO) build -o $(CLI_BIN) ./dre-collector/cmd/dre-cli
 	@$(GO) build -o $(REPLAY_BIN) ./dre-replay-cli/cmd/dre-replay
+	@$(GO) build -o $(BUGIT_BIN) ./bugit-cli/cmd/bugit
 
 demo-snapshot:
 	$(GO) run ./scripts/generate-demo-snapshot -out test/fixtures/demo-checkout-500.dre

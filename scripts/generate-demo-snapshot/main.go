@@ -35,7 +35,7 @@ func main() {
 	m.Checksum = sha256Hex(eventsBuf.Bytes())
 
 	clock := buildClockTimeline(events)
-	tarGz, err := drearchive.PackTarGz(m, eventsBuf.Bytes(), graph, redact, clock)
+	tarGz, err := drearchive.PackTarGz(m, eventsBuf.Bytes(), graph, redact, clock, manifest.SourceMap{})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

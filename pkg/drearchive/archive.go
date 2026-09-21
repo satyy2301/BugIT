@@ -23,6 +23,7 @@ type Snapshot struct {
 	VectorGraph   manifest.VectorGraph
 	RedactionLog  manifest.RedactionLog
 	ClockTimeline manifest.ClockTimeline
+	SourceMap     manifest.SourceMap
 }
 
 func Encrypt(plain []byte, key string) ([]byte, error) {
@@ -61,7 +62,7 @@ func Decrypt(data []byte, key string) ([]byte, error) {
 	return gcm.Open(nil, nonce, ciphertext, nil)
 }
 
-func PackTarGz(m manifest.Manifest, events []byte, graph manifest.VectorGraph, redact manifest.RedactionLog, clock manifest.ClockTimeline) ([]byte, error) {
+func PackTarGz(m manifest.Manifest, events []byte, graph manifest.VectorGraph, redact manifest.RedactionLog, clock manifest.ClockTimeline, srcMap manifest.SourceMap) ([]byte, error) {
 	var buf bytes.Buffer
 	gz := gzip.NewWriter(&buf)
 	tw := tar.NewWriter(gz)
@@ -93,6 +94,12 @@ func PackTarGz(m manifest.Manifest, events []byte, graph manifest.VectorGraph, r
 	cb, _ := json.MarshalIndent(clock, "", "  ")
 	if err := writeFile("clock_timeline.json", cb); err != nil {
 		return nil, err
+	}
+	if len(srcMap.Events) > 0 {
+		sb, _ := json.MarshalIndent(srcMap, "", "  ")
+		if err := writeFile("source_map.json", sb); err != nil {
+			return nil, err
+		}
 	}
 	if err := tw.Close(); err != nil {
 		return nil, err
@@ -139,6 +146,9 @@ func ParseTarGz(data []byte) (*Snapshot, error) {
 	}
 	if b, ok := files["clock_timeline.json"]; ok {
 		_ = json.Unmarshal(b, &snap.ClockTimeline)
+	}
+	if b, ok := files["source_map.json"]; ok {
+		_ = json.Unmarshal(b, &snap.SourceMap)
 	}
 	eventsReader := bytes.NewReader(files["events.bin"])
 	for {

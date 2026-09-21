@@ -41,6 +41,14 @@ interface ClockEntry {
   timestamp_ns: number;
 }
 
+interface SourceRef {
+  index: number;
+  file: string;
+  line: number;
+  column?: number;
+  function?: string;
+}
+
 interface IDELoadResponse {
   manifest: {
     id: string;
@@ -56,6 +64,7 @@ interface IDELoadResponse {
   event_count?: number;
   events?: EventSummary[];
   flow?: string;
+  source_map?: SourceRef[];
   replay?: {
     proxy_addr: string;
     debug_addr: string;
@@ -81,6 +90,8 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('bugit.startReplayDebug', startReplayDebug),
     vscode.commands.registerCommand('bugit.stopReplay', stopReplay),
     vscode.commands.registerCommand('bugit.openSourceAtEvent', openSourceAtEvent),
+    vscode.commands.registerCommand('bugit.openLatest', openLatestSnapshot),
+    vscode.commands.registerCommand('bugit.startCapture', startCaptureTask),
     vscode.debug.registerDebugConfigurationProvider('bugit-dre', {
       resolveDebugConfiguration: () => ({
         type: 'bugit-dre',
@@ -124,9 +135,14 @@ function resolveReplayBin(): string {
   if (process.env.DRE_REPLAY_BIN && fs.existsSync(process.env.DRE_REPLAY_BIN)) {
     return process.env.DRE_REPLAY_BIN;
   }
+  const plat = process.platform === 'win32' ? 'win32-x64' : process.platform === 'darwin' ? 'darwin-arm64' : 'linux-x64';
+  const bundled = path.join(extensionContext.extensionPath, 'bin', plat, process.platform === 'win32' ? 'dre-replay.exe' : 'dre-replay');
+  if (fs.existsSync(bundled)) {
+    return bundled;
+  }
   const root = resolveRepoRoot();
   if (root) {
-    for (const c of [path.join(root, 'bin', 'dre-replay.exe'), path.join(root, 'bin', 'dre-replay')]) {
+    for (const c of [path.join(root, 'bin', 'dre-replay.exe'), path.join(root, 'bin', 'dre-replay'), path.join(root, '.bugit', 'bin', 'dre-replay.exe')]) {
       if (fs.existsSync(c)) {
         return c;
       }
@@ -142,10 +158,16 @@ function resolveConfigPath(): string {
   }
   const root = resolveRepoRoot();
   if (root) {
-    const p = path.join(root, 'deploy', 'replay.yaml');
-    if (fs.existsSync(p)) {
-      return p;
+    for (const rel of ['.bugit/replay.yaml', 'deploy/replay.yaml']) {
+      const p = path.join(root, ...rel.split('/'));
+      if (fs.existsSync(p)) {
+        return p;
+      }
     }
+  }
+  const bundled = path.join(extensionContext.extensionPath, 'resources', 'replay.yaml');
+  if (fs.existsSync(bundled)) {
+    return bundled;
   }
   return '';
 }
@@ -156,10 +178,39 @@ function collectorUrl(): string {
 
 function latestDrePath(): string {
   const root = resolveRepoRoot() ?? vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '';
+  const bugitLatest = path.join(root, '.bugit', 'latest.dre');
+  if (fs.existsSync(bugitLatest)) {
+    return bugitLatest;
+  }
   return path.join(root, 'latest.dre');
 }
 
+async function openLatestSnapshot() {
+  const latest = latestDrePath();
+  if (!fs.existsSync(latest)) {
+    vscode.window.showWarningMessage('No .bugit/latest.dre found. Run bugit capture first.');
+    return;
+  }
+  await loadSnapshotFromPath(latest);
+}
+
+async function startCaptureTask() {
+  const folder = vscode.workspace.workspaceFolders?.[0];
+  if (!folder) {
+    vscode.window.showWarningMessage('Open a project folder first');
+    return;
+  }
+  const term = vscode.window.createTerminal({ name: 'BugIT Capture', cwd: folder.uri.fsPath });
+  term.show();
+  term.sendText('bugit capture -- npm run dev');
+}
+
 async function loadSnapshot() {
+  const openPath = process.env.BUGIT_OPEN_SNAPSHOT;
+  if (openPath && fs.existsSync(openPath)) {
+    await loadSnapshotFromPath(openPath);
+    return;
+  }
   const folders = vscode.workspace.workspaceFolders;
   const defaultDir = folders?.[0]?.uri;
   const liveCapture = defaultDir ? vscode.Uri.file(path.join(defaultDir.fsPath, 'latest.dre')) : undefined;
@@ -167,9 +218,11 @@ async function loadSnapshot() {
     ? vscode.Uri.joinPath(defaultDir, 'test', 'fixtures', 'demo-checkout-500.dre')
     : undefined;
   const defaultUri =
-    liveCapture && fs.existsSync(liveCapture.fsPath)
-      ? liveCapture
-      : demoFixture && fs.existsSync(demoFixture.fsPath)
+    latestDrePath() && fs.existsSync(latestDrePath())
+      ? vscode.Uri.file(latestDrePath())
+      : liveCapture && fs.existsSync(liveCapture.fsPath)
+        ? liveCapture
+        : demoFixture && fs.existsSync(demoFixture.fsPath)
         ? demoFixture
         : defaultDir;
 
@@ -279,6 +332,10 @@ async function startReplay(
   const args = ['run', '--dre', dre, '--key', key];
   if (configPath) {
     args.push('--config', configPath);
+  }
+  const appBinary = vscode.workspace.getConfiguration('bugit').get<string>('appBinary');
+  if (appBinary && fs.existsSync(appBinary)) {
+    args.push('--binary', appBinary);
   }
   replayProcess = spawn(replayBin, args, {
     shell: false,
@@ -665,16 +722,29 @@ async function openSourceAtEvent() {
     vscode.window.showWarningMessage('Load a snapshot and seek to an event first');
     return;
   }
-  const delveSessions = vscode.debug.activeDebugSession;
-  if (!delveSessions || delveSessions.type !== 'go') {
-    vscode.window.showInformationMessage(
-      `Event ${highlightedIndex + 1}: pid=${ev.pid ?? 0} comm=${ev.comm ?? ev.service}. ` +
-        'Run DRE: Attach Delve, set breakpoints in Go source, then step replay cursor.',
-    );
+  const ref = currentPayload?.source_map?.find((s) => s.index === highlightedIndex);
+  if (ref?.file) {
+    const root = resolveRepoRoot() ?? vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '';
+    const candidates = [
+      path.join(root, ref.file),
+      ref.file,
+    ];
+    for (const filePath of candidates) {
+      if (fs.existsSync(filePath)) {
+        const doc = await vscode.workspace.openTextDocument(filePath);
+        const line = Math.max(0, (ref.line || 1) - 1);
+        const col = Math.max(0, (ref.column || 1) - 1);
+        await vscode.window.showTextDocument(doc, {
+          selection: new vscode.Range(line, col, line, col),
+        });
+        return;
+      }
+    }
+    vscode.window.showWarningMessage(`Source file not found in workspace: ${ref.file}`);
     return;
   }
   vscode.window.showInformationMessage(
-    `Delve active — correlate event ${highlightedIndex + 1} (pid=${ev.pid ?? 0}) with your Go breakpoints.`,
+    `Event ${highlightedIndex + 1}: pid=${ev.pid ?? 0} comm=${ev.comm ?? ev.service}. No source map entry — capture with Node inspect enabled.`,
   );
 }
 

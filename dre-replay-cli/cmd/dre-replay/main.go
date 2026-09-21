@@ -61,6 +61,7 @@ func runLoad(args []string) {
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
 	if *format == "ide" {
+		srcRefs := snap.SourceMap.Events
 		_ = enc.Encode(map[string]interface{}{
 			"manifest":       snap.Manifest,
 			"vector_graph":   snap.VectorGraph,
@@ -69,6 +70,7 @@ func runLoad(args []string) {
 			"events":         summary.SummarizeEvents(snap.Events),
 			"flow":           summary.FlowDescription(snap.Events),
 			"clock_timeline": snap.ClockTimeline,
+			"source_map":     srcRefs,
 			"replay": map[string]interface{}{
 				"proxy_addr":   cfg.ProxyAddr,
 				"debug_addr":   cfg.DebugAddr,

@@ -12,17 +12,28 @@ import (
 	"github.com/bugit/dre-engine/api/manifest"
 	"github.com/bugit/dre-engine/dre-collector/internal/buffer"
 	"github.com/bugit/dre-engine/pkg/drearchive"
+	"github.com/bugit/dre-engine/pkg/sourcemap"
 	"github.com/google/uuid"
 )
 
 type Exporter struct {
-	dir     string
-	cluster string
-	key     string
+	dir       string
+	cluster   string
+	key       string
+	incident  *manifest.Incident
+	sourceMap *sourcemap.Store
 }
 
 func New(dir, cluster, key string) *Exporter {
 	return &Exporter{dir: dir, cluster: cluster, key: key}
+}
+
+func (e *Exporter) SetIncident(inc *manifest.Incident) {
+	e.incident = inc
+}
+
+func (e *Exporter) SetSourceMap(store *sourcemap.Store) {
+	e.sourceMap = store
 }
 
 func (e *Exporter) Export(events []buffer.Event, graph manifest.VectorGraph, redact manifest.RedactionLog, trig manifest.Trigger) (manifest.Manifest, string, error) {
@@ -38,7 +49,9 @@ func (e *Exporter) Export(events []buffer.Event, graph manifest.VectorGraph, red
 		Trigger:    trig,
 		CapturedAt: time.Now().UTC(),
 		EventCount: len(events),
+		Incident:   e.incident,
 	}
+	e.incident = nil
 
 	var eventsBuf bytes.Buffer
 	for _, ev := range events {
@@ -49,7 +62,11 @@ func (e *Exporter) Export(events []buffer.Event, graph manifest.VectorGraph, red
 	manifestObj.Checksum = sha256Hex(eventsBuf.Bytes())
 
 	clock := buildClockTimeline(events)
-	tarGz, err := drearchive.PackTarGz(manifestObj, eventsBuf.Bytes(), graph, redact, clock)
+	var srcMap manifest.SourceMap
+	if e.sourceMap != nil {
+		srcMap = e.sourceMap.Snapshot()
+	}
+	tarGz, err := drearchive.PackTarGz(manifestObj, eventsBuf.Bytes(), graph, redact, clock, srcMap)
 	if err != nil {
 		return manifest.Manifest{}, "", err
 	}
