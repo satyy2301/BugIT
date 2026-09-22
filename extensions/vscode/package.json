@@ -2,7 +2,7 @@
   "name": "bugit-dre",
   "displayName": "BugIT DRE Engine",
   "description": "Plug-and-play local bug capture and replay for any project",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "publisher": "bugit",
   "license": "MIT",
   "icon": "media/icon.png",
@@ -35,6 +35,7 @@
     "onCommand:bugit.startRecord",
     "onCommand:bugit.stopRecord",
     "onCommand:bugit.forceStopRecord",
+    "onCommand:bugit.doctor",
     "onView:bugit.panel"
   ],
   "main": "./out/extension.js",
@@ -180,6 +181,11 @@
         "icon": "$(close)"
       },
       {
+        "command": "bugit.doctor",
+        "title": "BugIT: Doctor",
+        "icon": "$(heart)"
+      },
+      {
         "command": "bugit.fetchLatest",
         "title": "DRE: Fetch Latest Snapshot"
       },
@@ -250,7 +256,10 @@
   "scripts": {
     "compile": "tsc -p .",
     "watch": "tsc -watch -p .",
-    "package": "npm run compile && npx @vscode/vsce package --no-dependencies",
+    "bundle-binaries": "node scripts/bundle-binaries.js",
+    "verify-binaries": "node scripts/verify-binaries.js",
+    "prepackage": "npm run bundle-binaries",
+    "package": "npm run verify-binaries && npm run compile && npx @vscode/vsce package --no-dependencies",
     "postinstall": "node -e \"const fs=require('fs');const p='node_modules/mermaid/dist/mermaid.min.js';if(fs.existsSync(p)){fs.mkdirSync('media',{recursive:true});fs.copyFileSync(p,'media/mermaid.min.js');}\""
   },
   "dependencies": {

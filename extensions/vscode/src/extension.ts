@@ -3,7 +3,8 @@ import { spawn, ChildProcess } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import { downloadSnapshot, listSnapshots, pickLatest } from './collector';
-import { startCapture, stopCapture, forceStopCapture, latestSnapshotPath } from './captureManager';
+import { startCapture, stopCapture, forceStopCapture, latestSnapshotPath, resolveBugitBin } from './captureManager';
+import { formatDoctorReport, inspectBugitBinary, extensionVersion, validateBugitBinary } from './binaryCheck';
 import { registerSidebar } from './sidebarPanel';
 import { debuggerRequest, DebuggerResponse, isDebuggerReachable, parseDebugAddr } from './replayClient';
 
@@ -98,6 +99,7 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('bugit.startRecord', startCaptureTask),
     vscode.commands.registerCommand('bugit.stopRecord', stopRecordTask),
     vscode.commands.registerCommand('bugit.forceStopRecord', () => forceStopCapture(extensionContext)),
+    vscode.commands.registerCommand('bugit.doctor', runDoctor),
     vscode.debug.registerDebugConfigurationProvider('bugit-dre', {
       resolveDebugConfiguration: () => ({
         type: 'bugit-dre',
@@ -206,6 +208,25 @@ async function openLatestSnapshot() {
 
 async function startCaptureTask() {
   await startCapture(extensionContext);
+}
+
+async function runDoctor() {
+  const folder = vscode.workspace.workspaceFolders?.[0];
+  const workspace = folder?.uri.fsPath;
+  const bugitBin = resolveBugitBin(extensionContext);
+  const info = inspectBugitBinary(bugitBin);
+  const report = formatDoctorReport(info, workspace);
+  const channel = vscode.window.createOutputChannel('BugIT Doctor');
+  channel.clear();
+  channel.appendLine(report);
+  channel.show(true);
+
+  const err = validateBugitBinary(info);
+  if (err) {
+    vscode.window.showWarningMessage(err);
+    return;
+  }
+  vscode.window.showInformationMessage(`BugIT CLI OK (v${extensionVersion()})`);
 }
 
 async function stopRecordTask() {

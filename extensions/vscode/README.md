@@ -28,6 +28,7 @@ Monorepos: open the whole repo — BugIT auto-detects `backend/` and API ports f
 | BugIT: Record | Start attach-mode recording |
 | BugIT: Stop and Save | Stop and open timeline |
 | BugIT: Force Stop Recording | Force-kill capture session |
+| BugIT: Doctor | Check bundled CLI version and record support |
 | DRE: Open Latest Snapshot | Load `.bugit/latest.dre` |
 | DRE: Open Source at Current Event | Jump to file:line from source map |
 
@@ -40,7 +41,15 @@ Monorepos: open the whole repo — BugIT auto-detects `backend/` and API ports f
 ## Publish (maintainers)
 
 ```powershell
-npm run package
+# From repo root — builds fresh bugit + dre-replay and bundles into extension
+.\scripts\build.ps1
+cd extensions\vscode
+npm run package          # runs bundle-binaries + verify-binaries + compile + vsce
+npm run verify-binaries  # optional standalone check
+
+# Publish (requires VSCE_PAT)
 $env:VSCE_PAT = "your-token"
 npx @vscode/vsce publish --no-dependencies
 ```
+
+`npm run package` fails if bundled `bugit` version does not match `package.json` or if `record` is missing.

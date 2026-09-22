@@ -55,7 +55,7 @@ package:vscode:
   image: node:20-bookworm
   needs: [build]
   script:
-    - cd extensions/vscode && npm ci && npm run package
+    - cd extensions/vscode && npm ci && BUGIT_VERIFY_ALL_PLATFORMS=1 npm run verify-binaries && npm run package
   artifacts:
     paths:
       - extensions/vscode/*.vsix
