@@ -36,6 +36,8 @@ func main() {
 		runSnapshots(os.Args[2:])
 	case "doctor":
 		runDoctor(os.Args[2:])
+	case "status":
+		runStatus(os.Args[2:])
 	case "version":
 		fmt.Println("bugit", version)
 	default:
@@ -49,41 +51,45 @@ func runCapture(args []string) {
 	saveOnExit := fs.Bool("save-on-exit", true, "save snapshot when command exits")
 	mode := fs.String("mode", "local", "capture mode: local or cluster")
 	detail := fs.String("detail", "manual capture", "snapshot detail on exit")
-	root := fs.String("root", ".", "project root")
+	root := fs.String("root", ".", "workspace folder")
+	auto := fs.Bool("auto", false, "auto-detect dev command and ports")
 	_ = fs.Parse(args)
 
 	rest := fs.Args()
-	if len(rest) == 0 {
-		fatal(fmt.Errorf("usage: bugit capture [--] <command...>"))
-	}
-	if rest[0] == "--" {
+	if *auto {
+		rest = nil
+	} else if len(rest) > 0 && rest[0] == "--" {
 		rest = rest[1:]
 	}
-	if len(rest) == 0 {
-		fatal(fmt.Errorf("command required after --"))
+	if !*auto && len(rest) == 0 {
+		fatal(fmt.Errorf("usage: bugit capture [--auto] OR bugit capture -- <command...>"))
 	}
 	if *mode == "cluster" {
 		fatal(fmt.Errorf("cluster mode: use dre-agent + dre-cli trigger (see docs/runbooks/)"))
 	}
 
 	rootPath, _ := filepath.Abs(*root)
-	layout := project.LayoutFor(project.FindRoot(rootPath))
-	cfg, _ := project.LoadConfig(layout.ConfigPath)
+	target := project.ResolveCaptureTarget(rootPath)
 
-	fmt.Printf("BugIT capture starting in %s\n", rootPath)
-	fmt.Printf("Record inbound HTTP via proxy: http://%s\n", cfg.RecordProxy)
-	fmt.Printf("App listens on PORT=%d (internal)\n", cfg.AppPort+10000)
+	fmt.Printf("BugIT capture in %s\n", target.Root)
+	fmt.Printf("Use your app at %s\n", localcapture.PublicURL(rootPath))
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	path, err := localcapture.RunCapture(ctx, localcapture.CaptureOptions{
-		Root:       rootPath,
-		Command:    rest,
-		SaveOnExit: *saveOnExit,
-		Mode:       *mode,
-		Detail:     *detail,
-	})
+	var path string
+	var err error
+	if *auto {
+		path, err = localcapture.RunCaptureAuto(ctx, rootPath, *saveOnExit, *detail)
+	} else {
+		path, err = localcapture.RunCapture(ctx, localcapture.CaptureOptions{
+			Root:       rootPath,
+			Command:    rest,
+			SaveOnExit: *saveOnExit,
+			Mode:       *mode,
+			Detail:     *detail,
+		})
+	}
 	if path != "" {
 		fmt.Printf("Snapshot saved: %s\n", path)
 	}
@@ -95,6 +101,16 @@ func runCapture(args []string) {
 	}
 }
 
+func runStatus(args []string) {
+	fs := flag.NewFlagSet("status", flag.ExitOnError)
+	root := fs.String("root", ".", "workspace folder")
+	_ = fs.Parse(args)
+	target := project.ResolveCaptureTarget(*root)
+	fmt.Printf("capture_root=%s\n", target.Root)
+	fmt.Printf("dev_command=%s\n", project.DetectDevCommand(target.Root))
+	fmt.Printf("public_url=%s\n", localcapture.PublicURL(*root))
+}
+
 func runReplay(args []string) {
 	fs := flag.NewFlagSet("replay", flag.ExitOnError)
 	root := fs.String("root", ".", "project root")
@@ -103,7 +119,8 @@ func runReplay(args []string) {
 	_ = fs.Parse(args)
 
 	rootPath, _ := filepath.Abs(*root)
-	layout := project.LayoutFor(project.FindRoot(rootPath))
+	captureRoot := project.FindCaptureRoot(rootPath)
+	layout := project.LayoutFor(captureRoot)
 	snap := *drePath
 	if snap == "" {
 		var err error
@@ -171,7 +188,7 @@ func runSnapshot(args []string) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	d, _, err := localcapture.StartDaemon(ctx, project.FindRoot(*root))
+	d, _, err := localcapture.StartDaemon(ctx, project.FindCaptureRoot(*root))
 	if err != nil {
 		fatal(err)
 	}
@@ -208,29 +225,23 @@ func runDoctor(args []string) {
 	root := fs.String("root", ".", "project root")
 	_ = fs.Parse(args)
 
-	rootPath := project.FindRoot(*root)
+	rootPath := project.FindCaptureRoot(*root)
 	layout := project.LayoutFor(rootPath)
 	fmt.Println("BugIT doctor", version)
 	fmt.Println("OS:", runtime.GOOS, runtime.GOARCH)
-	fmt.Println("Project root:", rootPath)
+	fmt.Println("Capture root:", rootPath)
 	fmt.Println("BugIT dir:", layout.BugitDir)
+	fmt.Println("Public URL:", localcapture.PublicURL(*root))
 
 	replayBin := resolveReplayBin()
 	if _, err := exec.LookPath(replayBin); err != nil {
 		if _, statErr := os.Stat(replayBin); statErr != nil {
 			fmt.Println("WARN dre-replay not found:", replayBin)
-			fmt.Println("  Fix: make build  OR  npm install -g @bugit/cli")
 		} else {
 			fmt.Println("OK dre-replay:", replayBin)
 		}
 	} else {
 		fmt.Println("OK dre-replay:", replayBin)
-	}
-
-	if _, err := exec.LookPath("code"); err == nil {
-		fmt.Println("OK VS Code CLI available")
-	} else {
-		fmt.Println("WARN VS Code CLI (code) not on PATH")
 	}
 }
 
@@ -272,11 +283,13 @@ func usage() {
 	fmt.Println(`bugit — plug-and-play local bug capture and replay
 
 Commands:
-  bugit capture [--save-on-exit] [--root PATH] -- <command...>
-  bugit replay [--dre PATH] [--root PATH] [--open-source-at N]
+  bugit capture [--auto] [--root PATH]
+  bugit capture [--root PATH] -- <command...>
+  bugit replay [--dre PATH] [--root PATH]
   bugit open [--dre PATH] [--root PATH]
   bugit snapshot [--detail TEXT] [--root PATH]
   bugit snapshots list [--root PATH]
+  bugit status [--root PATH]
   bugit doctor [--root PATH]
   bugit version`)
 }

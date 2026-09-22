@@ -1,31 +1,44 @@
 # BugIT DRE Engine — VS Code Extension
 
-Capture, replay, and debug bugs locally with zero code changes.
+One-click local bug capture and replay. No CLI install required — `bugit` and `dre-replay` are bundled.
 
 ## Quick start
 
-1. Install the **BugIT DRE Engine** extension
-2. Install CLI: `npm install -g @bugit/cli`
-3. In your project terminal: `bugit capture -- npm run dev`
-4. Reproduce the bug, then press Ctrl+C
-5. Command Palette → **DRE: Open Latest Snapshot**
+1. Install **BugIT DRE Engine**
+2. Open your project folder
+3. BugIT sidebar → **Record** → use your app at its normal port → **Stop & Save** → **Replay**
+
+Monorepos: open the whole repo or `backend/` — BugIT auto-detects the Node app folder.
+
+## Sidebar
+
+| Button | Action |
+|--------|--------|
+| Record | Starts capture (`bugit capture --auto`) |
+| Stop & Save | Saves `.bugit/latest.dre` and opens timeline |
+| Replay Latest | Opens the latest snapshot |
+| Load Demo Snapshot | Bundled checkout demo |
 
 ## Commands
 
 | Command | Description |
 |---------|-------------|
-| DRE: Load Snapshot | Pick a `.dre` file |
+| BugIT: Record | Start capture |
+| BugIT: Stop and Save | Stop capture and open timeline |
 | DRE: Open Latest Snapshot | Load `.bugit/latest.dre` |
-| DRE: Start Capture | Run `bugit capture -- npm run dev` |
 | DRE: Open Source at Current Event | Jump to file:line from source map |
 
 ## Settings
 
-- `bugit.replayBin` — path to dre-replay (auto-detects bundled binary)
-- `bugit.replayConfig` — replay.yaml (defaults to `.bugit/replay.yaml`)
-- `bugit.appBinary` — Go binary for Delve attach during replay
+- `bugit.captureRoot` — app folder (e.g. `backend`), auto-written on first Record
+- `bugit.publicPort` — public port (default 4000)
+- `bugit.devCommand` — dev command (default `npm run dev`)
+- `bugit.bugitBin` / `bugit.replayBin` — override bundled binaries
 - `bugit.snapshotKey` — AES key for encrypted snapshots
 
-## Requirements
+## Publish (maintainers)
 
-Bundled `dre-replay` binary (platform-specific) or build from [BugIT repo](https://gitlab.com/bugit/dre-engine).
+```bash
+npm run package
+npx @vscode/vsce publish -p <PAT>
+```

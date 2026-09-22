@@ -3,6 +3,8 @@ import { spawn, ChildProcess } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import { downloadSnapshot, listSnapshots, pickLatest } from './collector';
+import { startCapture, stopCapture, latestSnapshotPath } from './captureManager';
+import { registerSidebar } from './sidebarPanel';
 import { debuggerRequest, DebuggerResponse, isDebuggerReachable, parseDebugAddr } from './replayClient';
 
 let panel: vscode.WebviewPanel | undefined;
@@ -80,6 +82,7 @@ export function activate(context: vscode.ExtensionContext) {
   eventStatusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
   eventStatusBar.name = 'DRE Event';
   context.subscriptions.push(eventStatusBar);
+  registerSidebar(context);
   context.subscriptions.push(
     vscode.commands.registerCommand('bugit.loadSnapshot', loadSnapshot),
     vscode.commands.registerCommand('bugit.fetchLatest', fetchLatest),
@@ -92,6 +95,8 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('bugit.openSourceAtEvent', openSourceAtEvent),
     vscode.commands.registerCommand('bugit.openLatest', openLatestSnapshot),
     vscode.commands.registerCommand('bugit.startCapture', startCaptureTask),
+    vscode.commands.registerCommand('bugit.startRecord', startCaptureTask),
+    vscode.commands.registerCommand('bugit.stopRecord', stopRecordTask),
     vscode.debug.registerDebugConfigurationProvider('bugit-dre', {
       resolveDebugConfiguration: () => ({
         type: 'bugit-dre',
@@ -178,6 +183,10 @@ function collectorUrl(): string {
 
 function latestDrePath(): string {
   const root = resolveRepoRoot() ?? vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '';
+  const fromCapture = latestSnapshotPath(root);
+  if (fromCapture) {
+    return fromCapture;
+  }
   const bugitLatest = path.join(root, '.bugit', 'latest.dre');
   if (fs.existsSync(bugitLatest)) {
     return bugitLatest;
@@ -195,14 +204,26 @@ async function openLatestSnapshot() {
 }
 
 async function startCaptureTask() {
-  const folder = vscode.workspace.workspaceFolders?.[0];
-  if (!folder) {
-    vscode.window.showWarningMessage('Open a project folder first');
+  await startCapture(extensionContext);
+}
+
+async function stopRecordTask() {
+  const saved = await stopCapture(extensionContext);
+  if (!saved) {
     return;
   }
-  const term = vscode.window.createTerminal({ name: 'BugIT Capture', cwd: folder.uri.fsPath });
-  term.show();
-  term.sendText('bugit capture -- npm run dev');
+  await loadSnapshotFromPath(saved);
+  const firstError = currentPayload?.events?.find((e) => e.is_error);
+  if (firstError) {
+    const jump = await vscode.window.showInformationMessage(
+      `Snapshot saved with ${currentPayload?.events?.filter((e) => e.is_error).length ?? 0} error event(s). Jump to first error?`,
+      'Jump',
+      'Dismiss',
+    );
+    if (jump === 'Jump') {
+      await debuggerCall('Seek', firstError.index);
+    }
+  }
 }
 
 async function loadSnapshot() {

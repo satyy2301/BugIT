@@ -5,6 +5,7 @@
   "version": "1.0.0",
   "publisher": "bugit",
   "license": "MIT",
+  "icon": "media/icon.png",
   "repository": {
     "type": "git",
     "url": "https://gitlab.com/bugit/dre-engine.git"
@@ -30,7 +31,10 @@
     "onCommand:bugit.stopReplay",
     "onCommand:bugit.openSourceAtEvent",
     "onCommand:bugit.openLatest",
-    "onCommand:bugit.startCapture"
+    "onCommand:bugit.startCapture",
+    "onCommand:bugit.startRecord",
+    "onCommand:bugit.stopRecord",
+    "onView:bugit.panel"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -46,27 +50,9 @@
     "views": {
       "bugit-sidebar": [
         {
-          "id": "bugit.actions",
-          "name": "Actions"
-        }
-      ]
-    },
-    "menus": {
-      "view/title": [
-        {
-          "command": "bugit.startCapture",
-          "when": "view == bugit.actions",
-          "group": "navigation@1"
-        },
-        {
-          "command": "bugit.openLatest",
-          "when": "view == bugit.actions",
-          "group": "navigation@2"
-        },
-        {
-          "command": "bugit.loadSnapshot",
-          "when": "view == bugit.actions",
-          "group": "navigation@3"
+          "type": "webview",
+          "id": "bugit.panel",
+          "name": "BugIT"
         }
       ]
     },
@@ -77,9 +63,9 @@
         "description": "Capture and replay bugs locally in minutes",
         "steps": [
           {
-            "id": "installCli",
-            "title": "Install BugIT CLI",
-            "description": "Run [npm install -g @bugit/cli](command:terminal.open?%5B%22npm%20install%20-g%20%40bugit%2Fcli%22%5D) in a terminal.",
+            "id": "openSidebar",
+            "title": "Open BugIT sidebar",
+            "description": "Click the BugIT icon in the activity bar — Record, Stop & Save, and Replay are one click away.",
             "media": { "markdown": "resources/walkthrough-install.md" }
           },
           {
@@ -92,8 +78,8 @@
           {
             "id": "capture",
             "title": "Capture in your project",
-            "description": "Run **DRE: Start Capture** or `bugit capture -- npm run dev`.",
-            "completionEvents": ["onCommand:bugit.startCapture"],
+            "description": "Click **Record** in the BugIT sidebar, use your app normally, then **Stop & Save**.",
+            "completionEvents": ["onCommand:bugit.startRecord"],
             "media": { "markdown": "resources/walkthrough-capture.md" }
           },
           {
@@ -113,6 +99,26 @@
           "type": "string",
           "default": "",
           "description": "Path to dre-replay binary (defaults to bundled binary)"
+        },
+        "bugit.bugitBin": {
+          "type": "string",
+          "default": "",
+          "description": "Path to bugit binary (defaults to bundled binary)"
+        },
+        "bugit.captureRoot": {
+          "type": "string",
+          "default": "",
+          "description": "Relative path to Node app root (e.g. backend). Auto-detected on first Record."
+        },
+        "bugit.devCommand": {
+          "type": "string",
+          "default": "npm run dev",
+          "description": "Dev server command used during capture"
+        },
+        "bugit.publicPort": {
+          "type": "number",
+          "default": 4000,
+          "description": "Public app port (proxy listens here during capture)"
         },
         "bugit.snapshotKey": {
           "type": "string",
@@ -156,6 +162,16 @@
         "command": "bugit.startCapture",
         "title": "DRE: Start Capture",
         "icon": "$(record)"
+      },
+      {
+        "command": "bugit.startRecord",
+        "title": "BugIT: Record",
+        "icon": "$(record)"
+      },
+      {
+        "command": "bugit.stopRecord",
+        "title": "BugIT: Stop and Save",
+        "icon": "$(debug-stop)"
       },
       {
         "command": "bugit.fetchLatest",

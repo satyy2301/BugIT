@@ -1,100 +1,84 @@
-# Local Quickstart — BugIT Plug-and-Play
+# Local Quickstart — BugIT One-Click
 
 Capture and replay bugs on **Windows, macOS, or Linux** with zero code changes.
 
 ## 1. Install
 
-```powershell
-# CLI (global)
-npm install -g @bugit/cli
+In VS Code: **Extensions** → search **BugIT DRE Engine** → **Install**
 
-# VS Code extension
-code --install-extension bugit.bugit-dre
-```
-
-Or build from source:
+Or from source:
 
 ```powershell
 cd BugIT
-make build
-# adds bin/bugit.exe and bin/dre-replay.exe
+.\scripts\build.ps1
+cd extensions\vscode
+npm install
+npm run package
+code --install-extension bugit-dre-1.0.0.vsix
 ```
 
-Verify:
+Optional CLI for terminal users:
 
 ```powershell
+npm install -g @bugit/cli
 bugit doctor
 ```
 
 ## 2. Capture a bug (example: PlacementIQ)
 
-```powershell
-cd C:\Users\satyy\OneDrive\Desktop\satyam\MERN\PlacementIQ\backend
-bugit capture -- npm run dev
-```
+1. Open your project in VS Code (whole repo or `backend/` — both work)
+2. Open the **BugIT** sidebar
+3. Click **Record**
+4. Use your app at its normal URL (e.g. `http://localhost:4000/api/...`)
+5. Reproduce the bug
+6. Click **Stop & Save** — timeline opens automatically
 
-What happens:
-
-1. Creates `.bugit/` in your project (snapshots, config, replay.yaml)
-2. Starts local collector + HTTP record proxy
-3. Runs your app with `PORT=<internal>` and debug inspector enabled
-4. **Send API requests through the record proxy** shown in terminal (`http://127.0.0.1:28081`)
-5. On Ctrl+C or HTTP 5xx, saves `.bugit/latest.dre`
+BugIT auto-detects `backend/` in monorepos and writes `.vscode/settings.json` on first Record.
 
 ## 3. Replay
+
+Click **Replay Latest** in the sidebar, or run **DRE: Open Latest Snapshot**.
+
+Terminal fallback:
 
 ```powershell
 bugit replay
 ```
 
-Or in VS Code: **DRE: Open Latest Snapshot**
-
 ## 4. Jump to source
 
-1. Load snapshot in VS Code
-2. Click an event in the timeline (or step with F10)
-3. Run **DRE: Open Source at Current Event**
+1. Click an event in the timeline (or step with F10)
+2. Run **DRE: Open Source at Current Event**
 
-Requires Node `--inspect` during capture (auto-injected by `bugit capture`).
+Requires Node `--inspect` during capture (auto-injected by BugIT).
 
 ## 5. Commands reference
 
-| Command | Purpose |
-|---------|---------|
-| `bugit capture -- npm run dev` | Record while dev server runs |
-| `bugit snapshot` | Manual snapshot (collector must be running) |
-| `bugit replay` | Replay latest `.dre` |
-| `bugit open` | Open in VS Code |
-| `bugit snapshots list` | List `.bugit/snapshots/` |
-| `bugit doctor` | Check install |
+| Action | VS Code | CLI (optional) |
+|--------|---------|----------------|
+| Record | Sidebar **Record** | `bugit capture --auto` |
+| Stop & save | Sidebar **Stop & Save** | Ctrl+C in capture terminal |
+| Replay | Sidebar **Replay Latest** | `bugit replay` |
+| Doctor | — | `bugit doctor` |
 
 ## 6. Project layout
 
 ```
 your-project/
-  .bugit/
-    bugit.yaml          # ports, keys
-    replay.yaml         # auto-generated for replay
-    latest.dre          # most recent snapshot
-    snapshots/          # all incidents
-    data/               # collector buffer (gitignored)
+  .vscode/settings.json   # bugit.captureRoot, publicPort (auto-written)
+  backend/                # auto-detected in monorepos
+    .bugit/
+      bugit.yaml
+      replay.yaml
+      latest.dre
+      snapshots/
 ```
-
-## 7. Team / production capture (K8s)
-
-For cluster-wide eBPF capture, use team mode:
-
-```bash
-bugit capture --mode cluster   # prints pointer to K8s runbooks
-```
-
-See [EKS deploy](runbooks/eks-deploy.md) and [demo walkthrough](demo-walkthrough.md).
 
 ## Troubleshooting
 
-| Problem | Fix |
-|---------|-----|
-| `dre-replay not found` | Run `make build` or install `@bugit/cli` |
-| Empty snapshot | Send traffic through record proxy URL |
-| No source map | Ensure Node app started via `bugit capture` (inspect auto-enabled) |
-| Port in use | Edit `.bugit/bugit.yaml` collector/proxy ports |
+| Issue | Fix |
+|-------|-----|
+| Sidebar buttons do nothing | Reload VS Code; ensure a folder is open |
+| No snapshot after Stop | Send at least one HTTP request to your app while recording |
+| Wrong app folder | Set `bugit.captureRoot` in settings (e.g. `backend`) |
+| Port in use | Stop other dev servers on the same port before Record |

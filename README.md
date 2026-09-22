@@ -1,33 +1,39 @@
 # BugIT — DRE Engine
 
-Deterministic Replay Environment for local development and Kubernetes microservices. **Zero-code capture** on Windows/macOS/Linux, plus eBPF cluster capture for production.
+Deterministic Replay Environment for local development and Kubernetes microservices. **One-click capture** in VS Code on Windows/macOS/Linux, plus eBPF cluster capture for production.
 
-## Quick Start (local — any OS)
+## Quick Start (VS Code — 3 steps)
+
+1. Install **BugIT DRE Engine** from the VS Code Marketplace
+2. Open your project folder
+3. BugIT sidebar → **Record** → use your app normally → **Stop & Save** → **Replay**
+
+Full walkthrough: [Local quickstart](docs/local-quickstart.md)
+
+Example (PlacementIQ monorepo — open whole repo or `backend/`):
+
+```
+BugIT sidebar → Record → http://localhost:4000 → Stop & Save
+```
+
+## Optional CLI
 
 ```powershell
 npm install -g @bugit/cli
 cd your-project
-bugit capture -- npm run dev
-# reproduce bug, Ctrl+C
+bugit capture --auto
 bugit replay
-```
-
-VS Code: install **BugIT DRE Engine** extension → **DRE: Open Latest Snapshot**
-
-Full walkthrough: [Local quickstart](docs/local-quickstart.md)
-
-Example project:
-
-```powershell
-cd C:\Users\satyy\OneDrive\Desktop\satyam\MERN\PlacementIQ\backend
-bugit capture -- npm run dev
 ```
 
 ## Build from source
 
+```powershell
+.\scripts\build.ps1          # Windows: bugit.exe + dre-replay.exe + extension bin bundle
+```
+
 ```bash
-make build          # bugit, dre-replay, dre-collector, dre-cli, dre-agent
-make demo-snapshot  # test/fixtures/demo-checkout-500.dre
+make build                   # Linux/macOS
+bash scripts/bundle-extension-binaries.sh
 ```
 
 Windows: eBPF capture needs WSL2; **local capture works natively**.
@@ -36,11 +42,11 @@ Windows: eBPF capture needs WSL2; **local capture works natively**.
 
 | Component | Description |
 |-----------|-------------|
-| `bugit` | Unified CLI — capture, replay, doctor |
+| `extensions/vscode` | **Primary UX** — sidebar Record/Stop/Replay, timeline, jump-to-source |
+| `bugit` | Unified CLI — capture, replay, doctor (optional) |
 | `dre-replay` | Local replay proxy + debugger sync |
 | `dre-collector` | Event aggregator + `.dre` export |
 | `dre-agent` | eBPF capture (Linux/K8s team mode) |
-| `extensions/vscode` | Timeline UI, jump-to-source, walkthrough |
 
 ## Team / production (K8s + eBPF)
 
@@ -55,7 +61,7 @@ See [EKS deploy](docs/runbooks/eks-deploy.md). Use `bugit capture --mode cluster
 
 ```powershell
 go run ./scripts/generate-demo-snapshot -out test/fixtures/demo-checkout-500.dre
-# VS Code: DRE: Load Snapshot
+# VS Code: BugIT sidebar → Load Demo Snapshot
 ```
 
 ## Documentation
@@ -64,3 +70,11 @@ go run ./scripts/generate-demo-snapshot -out test/fixtures/demo-checkout-500.dre
 - [Demo walkthrough](docs/demo-walkthrough.md)
 - [PRD v2](docs/PRD-v2.md)
 - [Dev environments](docs/dev-environments.md)
+
+## Publish extension (maintainers)
+
+```powershell
+cd extensions/vscode
+npm run package
+npx @vscode/vsce publish -p <PAT>
+```

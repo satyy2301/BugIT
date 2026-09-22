@@ -1,1 +1,1 @@
-Run **DRE: Start Capture** or `bugit capture -- npm run dev`. Send HTTP traffic through the record proxy shown in the terminal.
+Click **Record** in the BugIT sidebar. Use your app at its normal URL (e.g. `http://localhost:4000`). When done, click **Stop & Save** — the timeline opens automatically.

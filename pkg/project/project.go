@@ -1,23 +1,25 @@
 package project
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v3"
 )
 
 const (
-	DirName       = ".bugit"
-	ConfigName    = "bugit.yaml"
-	ReplayName    = "replay.yaml"
-	SnapshotsDir  = "snapshots"
-	DataDir       = "data"
-	LatestLink    = "latest.dre"
+	DirName      = ".bugit"
+	ConfigName   = "bugit.yaml"
+	ReplayName   = "replay.yaml"
+	SnapshotsDir = "snapshots"
+	DataDir      = "data"
+	LatestLink   = "latest.dre"
 )
 
-// Layout holds standard paths under a project root.
+// Layout holds standard paths under a capture root.
 type Layout struct {
 	Root           string
 	BugitDir       string
@@ -37,26 +39,64 @@ type Config struct {
 	SnapshotKey   string `yaml:"snapshot_key"`
 	Runtime       string `yaml:"runtime,omitempty"`
 	InspectPort   int    `yaml:"inspect_port,omitempty"`
+	CaptureRoot   string `yaml:"capture_root,omitempty"`
+	DevCommand    string `yaml:"dev_command,omitempty"`
+}
+
+// CaptureTarget describes where and how to run capture.
+type CaptureTarget struct {
+	Root       string
+	DevCommand []string
+	PublicPort int
 }
 
 func DefaultConfig() Config {
 	return Config{
 		CollectorHTTP: "http://127.0.0.1:28080",
 		CollectorGRPC: "127.0.0.1:29090",
-		RecordProxy:   "127.0.0.1:28081",
-		AppPort:       3000,
+		RecordProxy:   "127.0.0.1:4000",
+		AppPort:       4000,
 		SnapshotKey:   "dev-insecure-key-change-me",
 		InspectPort:   9229,
+		DevCommand:    "npm run dev",
 	}
 }
 
+// FindRoot returns nearest ancestor with a project marker (legacy).
 func FindRoot(start string) string {
-	dir, err := filepath.Abs(start)
+	return FindCaptureRoot(start)
+}
+
+// FindCaptureRoot picks the best directory to run npm/go dev from.
+func FindCaptureRoot(workspace string) string {
+	abs, err := filepath.Abs(workspace)
 	if err != nil {
-		return start
+		return workspace
 	}
+
+	// Cached in existing bugit.yaml at workspace level
+	if cached := readCachedCaptureRoot(abs); cached != "" {
+		if _, err := os.Stat(filepath.Join(cached, "package.json")); err == nil {
+			return cached
+		}
+	}
+
+	if hasDevPackageJSON(abs) {
+		return abs
+	}
+
+	// Monorepo: scan common subfolders
+	for _, sub := range []string{"backend", "server", "api", "apps/api", "packages/api"} {
+		candidate := filepath.Join(abs, sub)
+		if hasDevPackageJSON(candidate) {
+			return candidate
+		}
+	}
+
+	// Walk up for package.json with dev script (prefer over .git-only roots)
+	dir := abs
 	for {
-		if hasProjectMarker(dir) {
+		if hasDevPackageJSON(dir) {
 			return dir
 		}
 		parent := filepath.Dir(dir)
@@ -65,16 +105,143 @@ func FindRoot(start string) string {
 		}
 		dir = parent
 	}
-	return start
+
+	return abs
 }
 
-func hasProjectMarker(dir string) bool {
-	for _, name := range []string{"package.json", "go.mod", "pyproject.toml", "Cargo.toml", ".git"} {
-		if _, err := os.Stat(filepath.Join(dir, name)); err == nil {
-			return true
+func readCachedCaptureRoot(workspace string) string {
+	for _, base := range []string{workspace, filepath.Dir(workspace)} {
+		path := filepath.Join(base, DirName, ConfigName)
+		cfg, err := LoadConfig(path)
+		if err != nil || cfg.CaptureRoot == "" {
+			continue
 		}
+		if filepath.IsAbs(cfg.CaptureRoot) {
+			return cfg.CaptureRoot
+		}
+		return filepath.Join(base, cfg.CaptureRoot)
+	}
+	return ""
+}
+
+func hasDevPackageJSON(dir string) bool {
+	path := filepath.Join(dir, "package.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	var pkg struct {
+		Scripts map[string]string `json:"scripts"`
+	}
+	if err := json.Unmarshal(data, &pkg); err != nil {
+		return false
+	}
+	if pkg.Scripts["dev"] != "" || pkg.Scripts["start"] != "" {
+		return true
 	}
 	return false
+}
+
+// ResolveCaptureTarget finds root, dev command, and public port.
+func ResolveCaptureTarget(workspace string) CaptureTarget {
+	root := FindCaptureRoot(workspace)
+	cfgPath := filepath.Join(root, DirName, ConfigName)
+	cfg, _ := LoadConfig(cfgPath)
+
+	port := cfg.AppPort
+	if port <= 0 {
+		port = DetectPublicPort(root)
+	}
+
+	cmd := cfg.DevCommand
+	if cmd == "" {
+		cmd = DetectDevCommand(root)
+	}
+
+	return CaptureTarget{
+		Root:       root,
+		DevCommand: ParseDevCommand(cmd),
+		PublicPort: port,
+	}
+}
+
+func DetectDevCommand(root string) string {
+	path := filepath.Join(root, "package.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "npm run dev"
+	}
+	var pkg struct {
+		Scripts map[string]string `json:"scripts"`
+	}
+	if err := json.Unmarshal(data, &pkg); err != nil {
+		return "npm run dev"
+	}
+	if pkg.Scripts["dev"] != "" {
+		return "npm run dev"
+	}
+	if pkg.Scripts["start"] != "" {
+		return "npm start"
+	}
+	return "npm run dev"
+}
+
+func ParseDevCommand(cmd string) []string {
+	parts := strings.Fields(strings.TrimSpace(cmd))
+	if len(parts) == 0 {
+		return []string{"npm", "run", "dev"}
+	}
+	return parts
+}
+
+func DetectPublicPort(root string) int {
+	for _, name := range []string{".env", ".env.local", ".env.development"} {
+		if p := portFromEnvFile(filepath.Join(root, name)); p > 0 {
+			return p
+		}
+	}
+	if hasDevPackageJSON(root) {
+		return 4000
+	}
+	return 3000
+}
+
+func portFromEnvFile(path string) int {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "PORT=") {
+			v := strings.Trim(strings.TrimPrefix(line, "PORT="), "\"'")
+			if p, err := strconv.Atoi(v); err == nil && p > 0 {
+				return p
+			}
+		}
+	}
+	return 0
+}
+
+// PrepareConfig updates cfg for capture: public port on proxy, internal offset for app.
+func PrepareConfig(root string, cfg Config) Config {
+	if cfg.AppPort <= 0 {
+		cfg.AppPort = DetectPublicPort(root)
+	}
+	cfg.RecordProxy = fmtHostPort("127.0.0.1", cfg.AppPort)
+	if cfg.DevCommand == "" {
+		cfg.DevCommand = DetectDevCommand(root)
+	}
+	cfg.CaptureRoot = root
+	return cfg
+}
+
+func fmtHostPort(host string, port int) string {
+	return host + ":" + strconv.Itoa(port)
+}
+
+func InternalPort(publicPort int) int {
+	return publicPort + 10000
 }
 
 func LayoutFor(root string) Layout {

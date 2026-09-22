@@ -37,16 +37,29 @@ func hasFile(root, name string) bool {
 	return err == nil
 }
 
-// EnvAdjustments returns env vars for zero-code debugger attach.
+// EnvAdjustments returns env vars for zero-code debugger attach (single inspect flag).
 func (i Info) EnvAdjustments(inspectPort int) []string {
 	switch i.Runtime {
 	case RuntimeNode:
-		return []string{"NODE_OPTIONS=--inspect=127.0.0.1:" + itoa(inspectPort)}
+		token := "--inspect=127.0.0.1:" + itoa(inspectPort)
+		return []string{"BUGIT_NODE_INSPECT=" + token, "NODE_OPTIONS=" + token}
 	case RuntimePython:
 		return []string{"BUGIT_DEBUGPY=1", "BUGIT_DEBUGPY_PORT=" + itoa(inspectPort)}
 	default:
 		return nil
 	}
+}
+
+// CleanEnv removes NODE_OPTIONS so capture sets inspect exactly once.
+func CleanEnv(env []string) []string {
+	var out []string
+	for _, e := range env {
+		if len(e) >= 13 && e[:13] == "NODE_OPTIONS=" {
+			continue
+		}
+		out = append(out, e)
+	}
+	return out
 }
 
 func itoa(n int) string {

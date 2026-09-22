@@ -48,7 +48,8 @@ type CaptureOptions struct {
 }
 
 func StartDaemon(ctx context.Context, root string) (*Daemon, project.Config, error) {
-	layout, err := project.EnsureLayout(root)
+	captureRoot := project.FindCaptureRoot(root)
+	layout, err := project.EnsureLayout(captureRoot)
 	if err != nil {
 		return nil, project.Config{}, err
 	}
@@ -56,10 +57,9 @@ func StartDaemon(ctx context.Context, root string) (*Daemon, project.Config, err
 	if err != nil {
 		return nil, project.Config{}, err
 	}
-	if _, err := os.Stat(layout.ConfigPath); os.IsNotExist(err) {
-		if err := project.SaveConfig(layout.ConfigPath, cfg); err != nil {
-			return nil, project.Config{}, err
-		}
+	cfg = project.PrepareConfig(captureRoot, cfg)
+	if err := project.SaveConfig(layout.ConfigPath, cfg); err != nil {
+		return nil, project.Config{}, err
 	}
 
 	runCtx, cancel := context.WithCancel(ctx)
@@ -90,7 +90,7 @@ func StartDaemon(ctx context.Context, root string) (*Daemon, project.Config, err
 		SnapshotDir:     layout.SnapshotsPath,
 		LatestLink:      layout.LatestSnapshot,
 		ReplayPath:      layout.ReplayPath,
-		ProjectRoot:     root,
+		ProjectRoot:     captureRoot,
 	})
 
 	d.wg.Add(1)
@@ -108,7 +108,7 @@ func StartDaemon(ctx context.Context, root string) (*Daemon, project.Config, err
 		return nil, cfg, err
 	}
 
-	rt := runtimedetect.Detect(root)
+	rt := runtimedetect.Detect(captureRoot)
 	comm := string(rt.Runtime)
 	if comm == "unknown" {
 		comm = "app"
@@ -124,8 +124,8 @@ func StartDaemon(ctx context.Context, root string) (*Daemon, project.Config, err
 		}
 	}
 
-	targetPort := cfg.AppPort + 10000
-	targetAddr := fmt.Sprintf("127.0.0.1:%d", targetPort)
+	internalPort := project.InternalPort(cfg.AppPort)
+	targetAddr := fmt.Sprintf("127.0.0.1:%d", internalPort)
 	d.record = recordproxy.New(cfg.RecordProxy, targetAddr, comm, "local-dev", eventSink)
 	if err := d.record.Start(); err != nil {
 		cancel()
@@ -162,31 +162,34 @@ func (d *Daemon) Stop() {
 }
 
 func RunCapture(ctx context.Context, opts CaptureOptions) (string, error) {
-	root := project.FindRoot(opts.Root)
+	workspace, _ := filepath.Abs(opts.Root)
 	if len(opts.Command) == 0 {
 		return "", fmt.Errorf("capture command required after --")
 	}
 
-	daemon, cfg, err := StartDaemon(ctx, root)
+	captureRoot := project.FindCaptureRoot(workspace)
+	daemon, cfg, err := StartDaemon(ctx, workspace)
 	if err != nil {
 		return "", err
 	}
 	defer daemon.Stop()
 
-	rt := runtimedetect.Detect(root)
-	backendPort := cfg.AppPort + 10000
+	rt := runtimedetect.Detect(captureRoot)
+	internalPort := project.InternalPort(cfg.AppPort)
 	cmd := exec.CommandContext(ctx, opts.Command[0], opts.Command[1:]...)
-	cmd.Dir = root
+	cmd.Dir = captureRoot
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin
-	env := os.Environ()
-	env = append(env, fmt.Sprintf("PORT=%d", backendPort))
+	env := runtimedetect.CleanEnv(os.Environ())
+	env = append(env, fmt.Sprintf("PORT=%d", internalPort))
 	env = append(env, "BUGIT_RECORD_PROXY=http://127.0.0.1:28082")
 	env = append(env, "HTTP_PROXY=http://127.0.0.1:28082")
 	env = append(env, "HTTPS_PROXY=http://127.0.0.1:28082")
 	env = append(env, rt.EnvAdjustments(cfg.InspectPort)...)
 	cmd.Env = env
+
+	fmt.Fprintf(os.Stdout, "BugIT recording at http://127.0.0.1:%d (use this URL as normal)\n", cfg.AppPort)
 
 	if err := cmd.Start(); err != nil {
 		return "", err
@@ -216,6 +219,23 @@ func RunCapture(ctx context.Context, opts CaptureOptions) (string, error) {
 		snapPath, _ = daemon.triggerSnapshot(opts.Detail)
 	}
 	return snapPath, nil
+}
+
+// RunCaptureAuto detects dev command and ports from workspace.
+func RunCaptureAuto(ctx context.Context, workspace string, saveOnExit bool, detail string) (string, error) {
+	target := project.ResolveCaptureTarget(workspace)
+	return RunCapture(ctx, CaptureOptions{
+		Root:       workspace,
+		Command:    target.DevCommand,
+		SaveOnExit: saveOnExit,
+		Detail:     detail,
+	})
+}
+
+// PublicURL returns the URL users should hit during capture.
+func PublicURL(workspace string) string {
+	target := project.ResolveCaptureTarget(workspace)
+	return fmt.Sprintf("http://127.0.0.1:%d", target.PublicPort)
 }
 
 func (d *Daemon) TriggerSnapshotPublic(detail string) (string, error) {
@@ -330,7 +350,7 @@ func bytesTrim(b []byte) []byte {
 }
 
 func LatestSnapshot(root string) (string, error) {
-	layout := project.LayoutFor(project.FindRoot(root))
+	layout := project.LayoutFor(project.FindCaptureRoot(root))
 	if _, err := os.Stat(layout.LatestSnapshot); err == nil {
 		return layout.LatestSnapshot, nil
 	}
@@ -360,7 +380,7 @@ func LatestSnapshot(root string) (string, error) {
 }
 
 func ListSnapshots(root string) ([]string, error) {
-	layout := project.LayoutFor(project.FindRoot(root))
+	layout := project.LayoutFor(project.FindCaptureRoot(root))
 	entries, err := os.ReadDir(layout.SnapshotsPath)
 	if err != nil {
 		return nil, err
