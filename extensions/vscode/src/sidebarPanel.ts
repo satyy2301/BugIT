@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { CaptureState, isRecording, onCaptureStatus, startCapture, stopCapture } from './captureManager';
+import { CaptureState, isRecording, onCaptureStatus } from './captureManager';
 
 export class BugitSidebarProvider implements vscode.WebviewViewProvider {
   public static readonly viewType = 'bugit.panel';
@@ -19,6 +19,8 @@ export class BugitSidebarProvider implements vscode.WebviewViewProvider {
         await vscode.commands.executeCommand('bugit.startRecord');
       } else if (msg.type === 'stop') {
         await vscode.commands.executeCommand('bugit.stopRecord');
+      } else if (msg.type === 'forceStop') {
+        await vscode.commands.executeCommand('bugit.forceStopRecord');
       } else if (msg.type === 'replay') {
         await vscode.commands.executeCommand('bugit.openLatest');
       } else if (msg.type === 'demo') {
@@ -42,6 +44,7 @@ export class BugitSidebarProvider implements vscode.WebviewViewProvider {
   button { width: 100%; margin: 6px 0; padding: 10px; border: none; border-radius: 4px; cursor: pointer;
     background: var(--vscode-button-background); color: var(--vscode-button-foreground); font-size: 13px; }
   button.secondary { background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); }
+  button.danger { background: #b71c1c; color: #fff; }
   button:disabled { opacity: 0.5; cursor: default; }
   .status { background: var(--vscode-editor-inactiveSelectionBackground); padding: 10px; border-radius: 4px; margin-bottom: 12px; font-size: 12px; }
 </style></head><body>
@@ -49,13 +52,15 @@ export class BugitSidebarProvider implements vscode.WebviewViewProvider {
   <div class="status">${escapeHtml(message)}</div>
   <button id="record" ${recording ? 'disabled' : ''}>Record</button>
   <button id="stop" class="secondary" ${recording ? '' : 'disabled'}">Stop &amp; Save</button>
+  <button id="forceStop" class="danger" ${recording ? '' : 'disabled'}">Force Stop</button>
   <button id="replay" class="secondary">Replay Latest</button>
   <button id="demo" class="secondary">Load Demo Snapshot</button>
-  <p>Record → use your app normally → Stop → Replay</p>
+  <p>Run your app normally → Record → use it → Stop → Replay</p>
 <script>
   const vscode = acquireVsCodeApi();
   document.getElementById('record')?.addEventListener('click', () => vscode.postMessage({ type: 'record' }));
   document.getElementById('stop')?.addEventListener('click', () => vscode.postMessage({ type: 'stop' }));
+  document.getElementById('forceStop')?.addEventListener('click', () => vscode.postMessage({ type: 'forceStop' }));
   document.getElementById('replay')?.addEventListener('click', () => vscode.postMessage({ type: 'replay' }));
   document.getElementById('demo')?.addEventListener('click', () => vscode.postMessage({ type: 'demo' }));
 </script>

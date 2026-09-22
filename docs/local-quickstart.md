@@ -4,7 +4,7 @@ Capture and replay bugs on **Windows, macOS, or Linux** with zero code changes.
 
 ## 1. Install
 
-In VS Code: **Extensions** → search **BugIT DRE Engine** → **Install**
+In VS Code or Cursor: **Extensions** → search **BugIT DRE Engine** → **Install**
 
 Or from source:
 
@@ -14,26 +14,26 @@ cd BugIT
 cd extensions\vscode
 npm install
 npm run package
-code --install-extension bugit-dre-1.0.0.vsix
+code --install-extension bugit-dre-1.1.0.vsix
 ```
 
 Optional CLI for terminal users:
 
 ```powershell
-npm install -g @bugit/cli
 bugit doctor
 ```
 
 ## 2. Capture a bug (example: PlacementIQ)
 
 1. Open your project in VS Code (whole repo or `backend/` — both work)
-2. Open the **BugIT** sidebar
-3. Click **Record**
-4. Use your app at its normal URL (e.g. `http://localhost:4000/api/...`)
-5. Reproduce the bug
-6. Click **Stop & Save** — timeline opens automatically
+2. **Start your app normally** — run backend and frontend as you always do
+3. Open the **BugIT** sidebar → click **Record**
+4. BugIT auto-detects your backend port and attaches (no manual `bugit.yaml` edits)
+5. Use your app at its normal URLs (e.g. frontend `http://localhost:3000`, API `http://localhost:4000`)
+6. Reproduce the bug
+7. Click **Stop & Save** — timeline opens automatically
 
-BugIT auto-detects `backend/` in monorepos and writes `.vscode/settings.json` on first Record.
+If nothing is listening on the detected backend port, BugIT falls back to starting the dev server for you.
 
 ## 3. Replay
 
@@ -50,14 +50,15 @@ bugit replay
 1. Click an event in the timeline (or step with F10)
 2. Run **DRE: Open Source at Current Event**
 
-Requires Node `--inspect` during capture (auto-injected by BugIT).
+Works best when Node inspector is available (BugIT can enable it on the running backend).
 
 ## 5. Commands reference
 
 | Action | VS Code | CLI (optional) |
 |--------|---------|----------------|
-| Record | Sidebar **Record** | `bugit capture --auto` |
-| Stop & save | Sidebar **Stop & Save** | Ctrl+C in capture terminal |
+| Record | Sidebar **Record** | `bugit record` |
+| Stop & save | Sidebar **Stop & Save** | Ctrl+C in record terminal |
+| Force stop | Sidebar **Force Stop** | Kill hung capture/proxy |
 | Replay | Sidebar **Replay Latest** | `bugit replay` |
 | Doctor | — | `bugit doctor` |
 
@@ -65,10 +66,9 @@ Requires Node `--inspect` during capture (auto-injected by BugIT).
 
 ```
 your-project/
-  .vscode/settings.json   # bugit.captureRoot, publicPort (auto-written)
   backend/                # auto-detected in monorepos
     .bugit/
-      bugit.yaml
+      bugit.yaml          # auto-written on Record
       replay.yaml
       latest.dre
       snapshots/
@@ -79,6 +79,9 @@ your-project/
 | Issue | Fix |
 |-------|-----|
 | Sidebar buttons do nothing | Reload VS Code; ensure a folder is open |
-| No snapshot after Stop | Send at least one HTTP request to your app while recording |
-| Wrong app folder | Set `bugit.captureRoot` in settings (e.g. `backend`) |
-| Port in use | Stop other dev servers on the same port before Record |
+| No snapshot after Stop | Send at least one API request while recording; retry Stop |
+| Recording won't stop | Click **Force Stop** |
+| Attach failed | Ensure backend is running; try `NODE_OPTIONS=--inspect` on backend |
+| Spawn fallback when backend is up | Check backend port matches `.env` / `NEXT_PUBLIC_API_URL` |
+
+See also [Cloud capture](cloud-capture.md) for production deployments.

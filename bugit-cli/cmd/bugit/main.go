@@ -13,10 +13,11 @@ import (
 	"time"
 
 	"github.com/bugit/dre-engine/dre-collector/pkg/localcapture"
+	"github.com/bugit/dre-engine/pkg/discover"
 	"github.com/bugit/dre-engine/pkg/project"
 )
 
-const version = "1.0.0"
+const version = "1.1.0"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -26,6 +27,8 @@ func main() {
 	switch os.Args[1] {
 	case "capture":
 		runCapture(os.Args[2:])
+	case "record":
+		runRecord(os.Args[2:])
 	case "replay":
 		runReplay(os.Args[2:])
 	case "open":
@@ -69,6 +72,7 @@ func runCapture(args []string) {
 	}
 
 	rootPath, _ := filepath.Abs(*root)
+	_, _, _ = project.SyncWorkspaceConfig(rootPath)
 	target := project.ResolveCaptureTarget(rootPath)
 
 	fmt.Printf("BugIT capture in %s\n", target.Root)
@@ -180,20 +184,64 @@ func runOpen(args []string) {
 	}
 }
 
+func runRecord(args []string) {
+	fs := flag.NewFlagSet("record", flag.ExitOnError)
+	saveOnExit := fs.Bool("save-on-exit", true, "save snapshot when recording stops")
+	detail := fs.String("detail", "manual capture", "snapshot detail on exit")
+	root := fs.String("root", ".", "workspace folder")
+	_ = fs.Parse(args)
+
+	rootPath, _ := filepath.Abs(*root)
+	_, _, err := project.SyncWorkspaceConfig(rootPath)
+	if err != nil {
+		fatal(err)
+	}
+	disc := discover.Discover(rootPath)
+
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	var path string
+	if discover.IsListening("127.0.0.1", disc.BackendPort) {
+		fmt.Printf("BugIT record (attach) — backend listening on :%d\n", disc.BackendPort)
+		path, err = localcapture.RunAttachRecord(ctx, rootPath, disc, *saveOnExit, *detail)
+	} else {
+		fmt.Printf("No listener on :%d — spawn fallback (starting dev server)\n", disc.BackendPort)
+		fmt.Printf("Use your app at %s\n", localcapture.PublicURL(rootPath))
+		path, err = localcapture.RunCaptureAuto(ctx, rootPath, *saveOnExit, *detail)
+	}
+	if path != "" {
+		fmt.Printf("Snapshot saved: %s\n", path)
+	}
+	if err != nil && path == "" {
+		fatal(err)
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "record finished with: %v\n", err)
+	}
+}
+
 func runSnapshot(args []string) {
 	fs := flag.NewFlagSet("snapshot", flag.ExitOnError)
 	root := fs.String("root", ".", "project root")
 	detail := fs.String("detail", "manual snapshot", "trigger detail")
 	_ = fs.Parse(args)
 
+	rootPath, _ := filepath.Abs(*root)
+	path, err := localcapture.TriggerSnapshotHTTP(rootPath, *detail)
+	if err == nil && path != "" {
+		fmt.Println(path)
+		return
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	d, _, err := localcapture.StartDaemon(ctx, project.FindCaptureRoot(*root))
+	d, _, err := localcapture.StartDaemon(ctx, project.FindCaptureRoot(rootPath), localcapture.DaemonOptions{})
 	if err != nil {
 		fatal(err)
 	}
 	defer d.Stop()
-	path, err := d.TriggerSnapshotPublic(*detail)
+	path, err = d.TriggerSnapshotPublic(*detail)
 	if err != nil {
 		fatal(err)
 	}
@@ -283,6 +331,7 @@ func usage() {
 	fmt.Println(`bugit — plug-and-play local bug capture and replay
 
 Commands:
+  bugit record [--root PATH]
   bugit capture [--auto] [--root PATH]
   bugit capture [--root PATH] -- <command...>
   bugit replay [--dre PATH] [--root PATH]

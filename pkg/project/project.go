@@ -148,9 +148,10 @@ func ResolveCaptureTarget(workspace string) CaptureTarget {
 	cfgPath := filepath.Join(root, DirName, ConfigName)
 	cfg, _ := LoadConfig(cfgPath)
 
+	detected := DetectPublicPort(root)
 	port := cfg.AppPort
-	if port <= 0 {
-		port = DetectPublicPort(root)
+	if port <= 0 || port != detected {
+		port = detected
 	}
 
 	cmd := cfg.DevCommand
@@ -293,7 +294,28 @@ func SaveConfig(path string, cfg Config) error {
 	if err != nil {
 		return err
 	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
 	return os.WriteFile(path, data, 0o644)
+}
+
+// SyncWorkspaceConfig writes capture settings from workspace detection into bugit.yaml.
+func SyncWorkspaceConfig(workspace string) (Layout, Config, error) {
+	root := FindCaptureRoot(workspace)
+	layout, err := EnsureLayout(root)
+	if err != nil {
+		return layout, Config{}, err
+	}
+	cfg, err := LoadConfig(layout.ConfigPath)
+	if err != nil {
+		return layout, Config{}, err
+	}
+	cfg = PrepareConfig(root, cfg)
+	if err := SaveConfig(layout.ConfigPath, cfg); err != nil {
+		return layout, cfg, err
+	}
+	return layout, cfg, nil
 }
 
 func ensureGitignore(root string) error {

@@ -2,7 +2,7 @@
   "name": "bugit-dre",
   "displayName": "BugIT DRE Engine",
   "description": "Plug-and-play local bug capture and replay for any project",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "publisher": "bugit",
   "license": "MIT",
   "icon": "media/icon.png",
@@ -34,6 +34,7 @@
     "onCommand:bugit.startCapture",
     "onCommand:bugit.startRecord",
     "onCommand:bugit.stopRecord",
+    "onCommand:bugit.forceStopRecord",
     "onView:bugit.panel"
   ],
   "main": "./out/extension.js",
@@ -172,6 +173,11 @@
         "command": "bugit.stopRecord",
         "title": "BugIT: Stop and Save",
         "icon": "$(debug-stop)"
+      },
+      {
+        "command": "bugit.forceStopRecord",
+        "title": "BugIT: Force Stop Recording",
+        "icon": "$(close)"
       },
       {
         "command": "bugit.fetchLatest",

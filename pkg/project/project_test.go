@@ -35,3 +35,19 @@ func TestDetectDevCommand(t *testing.T) {
 		t.Fatalf("got %q", cmd)
 	}
 }
+
+func TestSyncWorkspaceConfig(t *testing.T) {
+	root := t.TempDir()
+	_ = os.WriteFile(filepath.Join(root, ".env"), []byte("PORT=4000\n"), 0o644)
+	_ = os.WriteFile(filepath.Join(root, "package.json"), []byte(`{"scripts":{"dev":"node server.js"}}`), 0o644)
+	layout, cfg, err := SyncWorkspaceConfig(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.AppPort != 4000 {
+		t.Fatalf("app_port %d want 4000", cfg.AppPort)
+	}
+	if _, err := os.Stat(layout.ConfigPath); err != nil {
+		t.Fatalf("config not written: %v", err)
+	}
+}

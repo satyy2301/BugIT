@@ -3,7 +3,7 @@ import { spawn, ChildProcess } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import { downloadSnapshot, listSnapshots, pickLatest } from './collector';
-import { startCapture, stopCapture, latestSnapshotPath } from './captureManager';
+import { startCapture, stopCapture, forceStopCapture, latestSnapshotPath } from './captureManager';
 import { registerSidebar } from './sidebarPanel';
 import { debuggerRequest, DebuggerResponse, isDebuggerReachable, parseDebugAddr } from './replayClient';
 
@@ -97,6 +97,7 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('bugit.startCapture', startCaptureTask),
     vscode.commands.registerCommand('bugit.startRecord', startCaptureTask),
     vscode.commands.registerCommand('bugit.stopRecord', stopRecordTask),
+    vscode.commands.registerCommand('bugit.forceStopRecord', () => forceStopCapture(extensionContext)),
     vscode.debug.registerDebugConfigurationProvider('bugit-dre', {
       resolveDebugConfiguration: () => ({
         type: 'bugit-dre',

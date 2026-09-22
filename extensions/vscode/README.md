@@ -6,16 +6,18 @@ One-click local bug capture and replay. No CLI install required — `bugit` and 
 
 1. Install **BugIT DRE Engine**
 2. Open your project folder
-3. BugIT sidebar → **Record** → use your app at its normal port → **Stop & Save** → **Replay**
+3. **Run your app normally** (backend + frontend)
+4. BugIT sidebar → **Record** → use your app → **Stop & Save** → **Replay**
 
-Monorepos: open the whole repo or `backend/` — BugIT auto-detects the Node app folder.
+Monorepos: open the whole repo — BugIT auto-detects `backend/` and API ports from `.env`.
 
 ## Sidebar
 
 | Button | Action |
 |--------|--------|
-| Record | Starts capture (`bugit capture --auto`) |
-| Stop & Save | Saves `.bugit/latest.dre` and opens timeline |
+| Record | Attach to running backend (`bugit record`) or spawn fallback |
+| Stop & Save | Save snapshot and open timeline |
+| Force Stop | Kill recording/proxy even if hung |
 | Replay Latest | Opens the latest snapshot |
 | Load Demo Snapshot | Bundled checkout demo |
 
@@ -23,22 +25,22 @@ Monorepos: open the whole repo or `backend/` — BugIT auto-detects the Node app
 
 | Command | Description |
 |---------|-------------|
-| BugIT: Record | Start capture |
-| BugIT: Stop and Save | Stop capture and open timeline |
+| BugIT: Record | Start attach-mode recording |
+| BugIT: Stop and Save | Stop and open timeline |
+| BugIT: Force Stop Recording | Force-kill capture session |
 | DRE: Open Latest Snapshot | Load `.bugit/latest.dre` |
 | DRE: Open Source at Current Event | Jump to file:line from source map |
 
-## Settings
+## Settings (advanced overrides only)
 
-- `bugit.captureRoot` — app folder (e.g. `backend`), auto-written on first Record
-- `bugit.publicPort` — public port (default 4000)
-- `bugit.devCommand` — dev command (default `npm run dev`)
+- `bugit.captureRoot` — app folder (auto-detected)
+- `bugit.publicPort` — backend port hint (auto-detected from `.env`)
 - `bugit.bugitBin` / `bugit.replayBin` — override bundled binaries
-- `bugit.snapshotKey` — AES key for encrypted snapshots
 
 ## Publish (maintainers)
 
-```bash
+```powershell
 npm run package
-npx @vscode/vsce publish -p <PAT>
+$env:VSCE_PAT = "your-token"
+npx @vscode/vsce publish --no-dependencies
 ```

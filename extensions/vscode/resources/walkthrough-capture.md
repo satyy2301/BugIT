@@ -1,1 +1,1 @@
-Click **Record** in the BugIT sidebar. Use your app at its normal URL (e.g. `http://localhost:4000`). When done, click **Stop & Save** — the timeline opens automatically.
+Run your backend and frontend as usual. Click **Record** in the BugIT sidebar — BugIT attaches automatically. Use your app normally, then **Stop & Save** to open the timeline.

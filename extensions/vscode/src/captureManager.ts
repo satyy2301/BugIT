@@ -8,6 +8,7 @@ export type CaptureState = 'idle' | 'recording' | 'saved';
 let captureProcess: cp.ChildProcess | undefined;
 let captureState: CaptureState = 'idle';
 let statusListeners: Array<(s: CaptureState, msg: string) => void> = [];
+let recordingHint = '';
 
 export function onCaptureStatus(listener: (s: CaptureState, msg: string) => void): vscode.Disposable {
   statusListeners.push(listener);
@@ -30,7 +31,10 @@ function statusMessage(): string {
     return 'Open a project folder';
   }
   if (captureState === 'recording') {
-    return `Recording — use your app at ${publicUrl(folder.uri.fsPath)}`;
+    if (recordingHint) {
+      return recordingHint;
+    }
+    return `Recording — use your app normally (${publicUrl(folder.uri.fsPath)})`;
   }
   if (captureState === 'saved') {
     return 'Snapshot saved — click Replay';
@@ -94,6 +98,57 @@ export function isRecording(): boolean {
   return captureState === 'recording';
 }
 
+function runBugitCommand(bugitBin: string, args: string[], workspace: string): Promise<void> {
+  return new Promise((resolve) => {
+    const proc = cp.spawn(bugitBin, args, { cwd: workspace, env: process.env, shell: false });
+    proc.on('exit', () => resolve());
+    setTimeout(resolve, 10000);
+  });
+}
+
+async function triggerSnapshot(bugitBin: string, workspace: string): Promise<void> {
+  await runBugitCommand(bugitBin, ['snapshot', '--root', workspace, '--detail', 'stop and save'], workspace);
+}
+
+async function waitForSnapshot(workspace: string, timeoutMs: number): Promise<string> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const latest = latestSnapshotPath(workspace);
+    if (latest && fs.existsSync(latest)) {
+      return latest;
+    }
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  return '';
+}
+
+function killProcessTree(proc: cp.ChildProcess, force: boolean): void {
+  if (!proc.pid) {
+    return;
+  }
+  if (process.platform === 'win32') {
+    const args = force ? ['/PID', String(proc.pid), '/T', '/F'] : ['/PID', String(proc.pid), '/T'];
+    cp.spawn('taskkill', args, { shell: false });
+    return;
+  }
+  try {
+    proc.kill(force ? 'SIGKILL' : 'SIGINT');
+  } catch {
+    // ignore
+  }
+}
+
+function handleCaptureOutput(text: string): void {
+  if (text.includes('attached to backend')) {
+    const m = text.match(/backend on :(\d+)/);
+    recordingHint = m ? `Recording — attached to :${m[1]}` : 'Recording — attached to running backend';
+    emitStatus();
+  } else if (text.includes('spawn fallback') || text.includes('BugIT recording at')) {
+    recordingHint = 'Recording — spawn fallback (dev server started by BugIT)';
+    emitStatus();
+  }
+}
+
 export async function startCapture(context: vscode.ExtensionContext): Promise<void> {
   const folder = vscode.workspace.workspaceFolders?.[0];
   if (!folder) {
@@ -109,10 +164,11 @@ export async function startCapture(context: vscode.ExtensionContext): Promise<vo
 
   const bugitBin = resolveBugitBin(context);
   const workspace = folder.uri.fsPath;
+  recordingHint = '';
   captureState = 'recording';
   emitStatus();
 
-  captureProcess = cp.spawn(bugitBin, ['capture', '--auto', '--root', workspace], {
+  captureProcess = cp.spawn(bugitBin, ['record', '--root', workspace], {
     cwd: workspace,
     env: process.env,
     shell: false,
@@ -120,15 +176,25 @@ export async function startCapture(context: vscode.ExtensionContext): Promise<vo
 
   const out = vscode.window.createOutputChannel('BugIT Capture');
   out.show(true);
-  out.appendLine(`Started: ${bugitBin} capture --auto`);
-  out.appendLine(`Use your app at ${publicUrl(workspace)}`);
+  out.appendLine(`Started: ${bugitBin} record`);
+  out.appendLine('Run your app normally — BugIT attaches to the running backend when possible');
 
-  captureProcess.stdout?.on('data', (d) => out.append(d.toString()));
-  captureProcess.stderr?.on('data', (d) => out.append(d.toString()));
+  captureProcess.stdout?.on('data', (d) => {
+    const text = d.toString();
+    out.append(text);
+    handleCaptureOutput(text);
+  });
+  captureProcess.stderr?.on('data', (d) => {
+    const text = d.toString();
+    out.append(text);
+    handleCaptureOutput(text);
+  });
 
   captureProcess.on('exit', () => {
     captureProcess = undefined;
-    captureState = 'saved';
+    const latest = latestSnapshotPath(workspace);
+    captureState = latest ? 'saved' : 'idle';
+    recordingHint = '';
     emitStatus();
   });
 }
@@ -139,22 +205,49 @@ export async function stopCapture(context: vscode.ExtensionContext): Promise<str
     return undefined;
   }
 
-  captureProcess.kill('SIGINT');
-  await new Promise((r) => setTimeout(r, 1500));
-
   const folder = vscode.workspace.workspaceFolders?.[0];
   if (!folder) {
     return undefined;
   }
-  const latest = latestSnapshotPath(folder.uri.fsPath);
-  if (latest && fs.existsSync(latest)) {
+  const workspace = folder.uri.fsPath;
+  const bugitBin = resolveBugitBin(context);
+
+  await triggerSnapshot(bugitBin, workspace);
+  killProcessTree(captureProcess, false);
+  await new Promise((r) => setTimeout(r, 500));
+
+  const latest = await waitForSnapshot(workspace, 5000);
+  captureProcess = undefined;
+  recordingHint = '';
+
+  if (latest) {
     captureState = 'saved';
     emitStatus();
     vscode.window.showInformationMessage('Bug snapshot saved');
     return latest;
   }
+  captureState = 'idle';
+  emitStatus();
   vscode.window.showWarningMessage('No snapshot saved yet — send a request to your app, then Stop again');
   return undefined;
+}
+
+export async function forceStopCapture(context: vscode.ExtensionContext): Promise<void> {
+  const folder = vscode.workspace.workspaceFolders?.[0];
+  const workspace = folder?.uri.fsPath ?? '';
+  const bugitBin = resolveBugitBin(context);
+
+  if (workspace) {
+    await triggerSnapshot(bugitBin, workspace).catch(() => undefined);
+  }
+  if (captureProcess) {
+    killProcessTree(captureProcess, true);
+  }
+  captureProcess = undefined;
+  recordingHint = '';
+  captureState = 'idle';
+  emitStatus();
+  vscode.window.showInformationMessage('BugIT recording force-stopped');
 }
 
 export function latestSnapshotPath(workspace: string): string {
@@ -173,6 +266,24 @@ async function writeWorkspaceDefaults(workspace: string): Promise<void> {
     ? fs.readFileSync(path.join(captureRoot, '.env'), 'utf8').match(/^PORT=(\d+)/m)
     : null;
   const port = portMatch ? parseInt(portMatch[1], 10) : 4000;
+
+  const bugitDir = path.join(captureRoot, '.bugit');
+  if (!fs.existsSync(bugitDir)) {
+    fs.mkdirSync(bugitDir, { recursive: true });
+  }
+  const yamlPath = path.join(bugitDir, 'bugit.yaml');
+  const yaml = [
+    'collector_http: http://127.0.0.1:28080',
+    'collector_grpc: 127.0.0.1:29090',
+    `record_proxy: 127.0.0.1:${port}`,
+    `app_port: ${port}`,
+    'snapshot_key: dev-insecure-key-change-me',
+    'inspect_port: 9229',
+    `capture_root: ${captureRoot.replace(/\\/g, '/')}`,
+    'dev_command: npm run dev',
+    '',
+  ].join('\n');
+  fs.writeFileSync(yamlPath, yaml);
 
   const vsDir = path.join(workspace, '.vscode');
   const settingsPath = path.join(vsDir, 'settings.json');
@@ -195,5 +306,6 @@ async function writeWorkspaceDefaults(workspace: string): Promise<void> {
 
 export function resetCaptureState() {
   captureState = 'idle';
+  recordingHint = '';
   emitStatus();
 }

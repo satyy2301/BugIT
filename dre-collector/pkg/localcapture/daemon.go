@@ -47,7 +47,12 @@ type CaptureOptions struct {
 	Detail     string
 }
 
-func StartDaemon(ctx context.Context, root string) (*Daemon, project.Config, error) {
+// DaemonOptions configures optional daemon behavior.
+type DaemonOptions struct {
+	SkipProxy bool
+}
+
+func StartDaemon(ctx context.Context, root string, opts DaemonOptions) (*Daemon, project.Config, error) {
 	captureRoot := project.FindCaptureRoot(root)
 	layout, err := project.EnsureLayout(captureRoot)
 	if err != nil {
@@ -124,27 +129,43 @@ func StartDaemon(ctx context.Context, root string) (*Daemon, project.Config, err
 		}
 	}
 
-	internalPort := project.InternalPort(cfg.AppPort)
-	targetAddr := fmt.Sprintf("127.0.0.1:%d", internalPort)
-	d.record = recordproxy.New(cfg.RecordProxy, targetAddr, comm, "local-dev", eventSink)
-	if err := d.record.Start(); err != nil {
-		cancel()
-		return nil, cfg, err
-	}
+	if !opts.SkipProxy {
+		internalPort := project.InternalPort(cfg.AppPort)
+		targetAddr := fmt.Sprintf("127.0.0.1:%d", internalPort)
+		d.record = recordproxy.New(cfg.RecordProxy, targetAddr, comm, "local-dev", eventSink)
+		if err := d.record.Start(); err != nil {
+			cancel()
+			return nil, cfg, err
+		}
 
-	outboundAddr := "127.0.0.1:28082"
-	d.outbound = recordproxy.NewOutbound(outboundAddr, comm, eventSink)
-	if err := d.outbound.Start(); err != nil {
-		cancel()
-		return nil, cfg, err
-	}
+		outboundAddr := "127.0.0.1:28082"
+		d.outbound = recordproxy.NewOutbound(outboundAddr, comm, eventSink)
+		if err := d.outbound.Start(); err != nil {
+			cancel()
+			return nil, cfg, err
+		}
 
-	if rt.Runtime == runtimedetect.RuntimeNode {
-		d.debugger = debugbridge.NewNodeBridge(cfg.InspectPort)
-		_ = d.debugger.Connect(runCtx)
+		if rt.Runtime == runtimedetect.RuntimeNode {
+			d.debugger = debugbridge.NewNodeBridge(cfg.InspectPort)
+			_ = d.debugger.Connect(runCtx)
+		}
 	}
 
 	return d, cfg, nil
+}
+
+// PostIOEvent ingests an IO event through the collector with HTTP-error source mapping.
+func (d *Daemon) PostIOEvent(evt ioevent.IOEvent) error {
+	if err := d.postEvent(evt); err != nil {
+		return err
+	}
+	if isHTTPError(evt) {
+		idx := int(evt.Fd)
+		if ref := d.captureSourceRef(); ref != nil {
+			d.sourceMap.Set(idx, ref.File, ref.Line, ref.Column, ref.Function)
+		}
+	}
+	return nil
 }
 
 func (d *Daemon) Stop() {
@@ -168,7 +189,7 @@ func RunCapture(ctx context.Context, opts CaptureOptions) (string, error) {
 	}
 
 	captureRoot := project.FindCaptureRoot(workspace)
-	daemon, cfg, err := StartDaemon(ctx, workspace)
+	daemon, cfg, err := StartDaemon(ctx, workspace, DaemonOptions{})
 	if err != nil {
 		return "", err
 	}

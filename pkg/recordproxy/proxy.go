@@ -26,6 +26,7 @@ type Server struct {
 	onEvent     EventHandler
 	eventIndex  atomic.Int64
 	httpServer  *http.Server
+	boundAddr   string
 }
 
 func New(listen, target, comm, nodeID string, onEvent EventHandler) *Server {
@@ -56,11 +57,21 @@ func (s *Server) Start() error {
 
 	mux := http.NewServeMux()
 	mux.Handle("/", proxy)
-	s.httpServer = &http.Server{Addr: s.ListenAddr, Handler: mux}
+	ln, err := net.Listen("tcp", s.ListenAddr)
+	if err != nil {
+		return err
+	}
+	s.boundAddr = ln.Addr().String()
+	s.httpServer = &http.Server{Handler: mux}
 	go func() {
-		_ = s.httpServer.ListenAndServe()
+		_ = s.httpServer.Serve(ln)
 	}()
 	return nil
+}
+
+// BoundAddr returns the address the proxy is listening on after Start.
+func (s *Server) BoundAddr() string {
+	return s.boundAddr
 }
 
 func (s *Server) Stop() error {
@@ -77,9 +88,18 @@ func (s *Server) recordRequest(req *http.Request) {
 }
 
 func (s *Server) recordResponse(resp *http.Response) {
-	var buf bytes.Buffer
-	_ = resp.Write(&buf)
-	s.emit(0, buf.Bytes())
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		body = nil
+	}
+	_ = resp.Body.Close()
+	resp.Body = io.NopCloser(bytes.NewReader(body))
+
+	clone := *resp
+	clone.Body = io.NopCloser(bytes.NewReader(body))
+	var recordBuf bytes.Buffer
+	_ = clone.Write(&recordBuf)
+	s.emit(0, recordBuf.Bytes())
 }
 
 func (s *Server) emit(isWrite uint8, payload []byte) {
@@ -162,9 +182,16 @@ func (p *OutboundProxy) handleHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
-	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	clone := *resp
+	clone.Body = io.NopCloser(bytes.NewReader(body))
 	var respBuf bytes.Buffer
-	_ = resp.Write(&respBuf)
+	_ = clone.Write(&respBuf)
 	p.emit(0, respBuf.Bytes())
 	for k, vv := range resp.Header {
 		for _, v := range vv {
@@ -172,7 +199,7 @@ func (p *OutboundProxy) handleHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	w.WriteHeader(resp.StatusCode)
-	_, _ = io.Copy(w, resp.Body)
+	_, _ = io.Copy(w, bytes.NewReader(body))
 }
 
 func (p *OutboundProxy) handleConnect(w http.ResponseWriter, r *http.Request) {
