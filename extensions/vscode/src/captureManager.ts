@@ -147,10 +147,20 @@ function killProcessTree(proc: cp.ChildProcess, force: boolean): void {
 
 function handleCaptureOutput(text: string): void {
   captureOutput += text;
-  if (text.includes('attached to backend')) {
+  if (text.includes('capturing inbound + outbound HTTP')) {
+    const m = text.match(/HTTP on :(\d+)/);
+    recordingHint = m
+      ? `Recording — capturing API traffic on :${m[1]}`
+      : 'Recording — capturing inbound + outbound API traffic';
+    emitStatus();
+  } else if (text.includes('attached to backend')) {
     const m = text.match(/backend on :(\d+)/);
     recordingHint = m ? `Recording — attached to :${m[1]}` : 'Recording — attached to running backend';
     emitStatus();
+  } else if (text.includes('no HTTP events captured')) {
+    vscode.window.showWarningMessage(
+      'BugIT captured no API traffic — use your app normally and ensure requests hit the backend port, then Stop again'
+    );
   } else if (text.includes('spawn fallback') || text.includes('BugIT recording at') || text.includes('BugIT capture in')) {
     recordingHint = usingCaptureFallback
       ? 'Recording — capture fallback (dev server started by BugIT)'
@@ -326,7 +336,9 @@ export async function stopCapture(context: vscode.ExtensionContext): Promise<str
   }
   captureState = 'idle';
   emitStatus();
-  vscode.window.showWarningMessage('No snapshot saved yet — send a request to your app, then Stop again');
+  vscode.window.showWarningMessage(
+    'No snapshot saved yet — use your app (hit the backend API), then Stop again'
+  );
   return undefined;
 }
 

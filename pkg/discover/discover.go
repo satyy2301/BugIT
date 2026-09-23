@@ -2,7 +2,6 @@ package discover
 
 import (
 	"net"
-	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -10,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/bugit/dre-engine/pkg/captureattach"
 	"github.com/bugit/dre-engine/pkg/project"
 )
 
@@ -61,7 +61,7 @@ func Discover(workspace string) Result {
 	if IsListening("127.0.0.1", res.BackendPort) {
 		res.BackendPID = PIDListeningOn("127.0.0.1", res.BackendPort)
 	}
-	res.InspectPort = FindInspectPort()
+	res.InspectPort = FindInspectPortForBackend(res.BackendPort, res.BackendPID, res.CaptureRoot)
 	return res
 }
 
@@ -154,17 +154,26 @@ func IsListening(host string, port int) bool {
 
 // FindInspectPort probes common Node inspector ports.
 func FindInspectPort() int {
-	client := &http.Client{Timeout: 300 * time.Millisecond}
+	return FindInspectPortForBackend(0, 0, "")
+}
+
+// FindInspectPortForBackend picks the inspector port whose debug target best matches the backend.
+func FindInspectPortForBackend(backendPort, backendPID int, captureRoot string) int {
+	opts := captureattach.TargetPickOptions{
+		BackendPort: backendPort,
+		BackendPID:  backendPID,
+		CaptureRoot: captureRoot,
+	}
+	bestPort := 0
+	bestScore := -1
 	for _, port := range []int{9229, 9230, 9231, 9232} {
-		resp, err := client.Get("http://127.0.0.1:" + itoa(port) + "/json/list")
-		if err == nil {
-			resp.Body.Close()
-			if resp.StatusCode == http.StatusOK {
-				return port
-			}
+		score := captureattach.ScoreInspectPort(port, opts)
+		if score > bestScore {
+			bestScore = score
+			bestPort = port
 		}
 	}
-	return 0
+	return bestPort
 }
 
 func itoa(n int) string {

@@ -41,6 +41,7 @@ type Config struct {
 	InspectPort   int    `yaml:"inspect_port,omitempty"`
 	CaptureRoot   string `yaml:"capture_root,omitempty"`
 	DevCommand    string `yaml:"dev_command,omitempty"`
+	Trigger4xx    bool   `yaml:"trigger_4xx,omitempty"`
 }
 
 // CaptureTarget describes where and how to run capture.

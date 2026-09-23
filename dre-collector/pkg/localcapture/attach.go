@@ -3,6 +3,7 @@ package localcapture
 import (
 	"context"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"time"
@@ -29,9 +30,11 @@ func RunAttachRecord(ctx context.Context, workspace string, disc discover.Result
 	}
 	if !captureattach.InspectAvailable(inspectPort) && disc.BackendPID > 0 {
 		fmt.Fprintf(os.Stderr, "Enabling Node inspector on pid %d\n", disc.BackendPID)
-		_ = captureattach.EnableNodeInspect(disc.BackendPID)
+		if err := captureattach.EnableNodeInspect(disc.BackendPID); err != nil {
+			fmt.Fprintf(os.Stderr, "WARN: EnableNodeInspect: %v\n", err)
+		}
 		time.Sleep(800 * time.Millisecond)
-		if p := discover.FindInspectPort(); p > 0 {
+		if p := discover.FindInspectPortForBackend(disc.BackendPort, disc.BackendPID, disc.CaptureRoot); p > 0 {
 			inspectPort = p
 		}
 	}
@@ -42,11 +45,23 @@ func RunAttachRecord(ctx context.Context, workspace string, disc discover.Result
 		comm = "app"
 	}
 
+	var eventCount int64
 	sink := func(evt ioevent.IOEvent) {
-		_ = daemon.PostIOEvent(evt)
+		if err := daemon.PostIOEvent(evt); err != nil {
+			log.Printf("attach ingest: %v", err)
+		} else {
+			eventCount++
+		}
 	}
 
-	tap, err := captureattach.StartNetworkTap(ctx, inspectPort, comm, sink)
+	tap, err := captureattach.StartAttachTap(ctx, captureattach.AttachOptions{
+		InspectPort: inspectPort,
+		BackendPort: disc.BackendPort,
+		BackendPID:  disc.BackendPID,
+		CaptureRoot: disc.CaptureRoot,
+		Comm:        comm,
+		Sink:        sink,
+	})
 	if err != nil {
 		return "", err
 	}
@@ -54,12 +69,19 @@ func RunAttachRecord(ctx context.Context, workspace string, disc discover.Result
 
 	if rt.Runtime == runtimedetect.RuntimeNode {
 		daemon.debugger = debugbridge.NewNodeBridge(inspectPort)
-		_ = daemon.debugger.Connect(ctx)
+		if err := daemon.debugger.Connect(ctx); err != nil {
+			fmt.Fprintf(os.Stderr, "WARN: debugger bridge: %v\n", err)
+		}
 	}
 
 	fmt.Fprintf(os.Stdout, "BugIT attached to backend on :%d (inspector :%d)\n", disc.BackendPort, inspectPort)
+	fmt.Fprintf(os.Stdout, "BugIT capturing inbound + outbound HTTP on :%d\n", disc.BackendPort)
 
 	<-ctx.Done()
+
+	if tap.InboundCount() == 0 && eventCount == 0 {
+		fmt.Fprintf(os.Stderr, "WARN: no HTTP events captured — ensure Node >=18, API traffic hits :%d, and inspector is connected\n", disc.BackendPort)
+	}
 
 	var snapPath string
 	if saveOnExit {

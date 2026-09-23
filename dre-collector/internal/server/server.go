@@ -71,6 +71,9 @@ func New(dataDir, cluster, key string, uploader storage.Uploader) *Collector {
 		httpBase: envOr("DRE_HTTP_PUBLIC_URL", ""),
 	}
 	c.triggers = trigger.New(c.captureSnapshot)
+	if os.Getenv("DRE_TRIGGER_4XX") == "1" {
+		c.triggers.SetTrigger4xx(true)
+	}
 	rulesPath := envOr("DRE_TRIGGER_RULES_PATH", "/etc/dre/trigger_rules.yaml")
 	if rules, err := trigger.LoadRules(rulesPath); err != nil {
 		if os.Getenv("DRE_LOCAL_MODE") != "1" {

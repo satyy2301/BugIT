@@ -7,6 +7,7 @@ type TriggerType string
 const (
 	TriggerManual      TriggerType = "manual"
 	TriggerHTTP5xx     TriggerType = "http_5xx"
+	TriggerHTTP4xx     TriggerType = "http_4xx"
 	TriggerProcessExit TriggerType = "process_exit"
 	TriggerSIGSEGV     TriggerType = "sigsegv"
 )

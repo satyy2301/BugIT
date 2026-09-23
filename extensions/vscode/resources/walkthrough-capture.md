@@ -1,1 +1,1 @@
-Run your backend and frontend as usual. Click **Record** in the BugIT sidebar — BugIT attaches automatically. Use your app normally, then **Stop & Save** to open the timeline.
+Run your backend and frontend as usual — no need to stop or restart them. Click **Record** in the BugIT sidebar; BugIT attaches and captures inbound API traffic (including 4xx/5xx) automatically. Use your app normally, then **Stop & Save** to open the timeline.

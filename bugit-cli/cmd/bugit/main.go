@@ -9,10 +9,13 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/bugit/dre-engine/dre-collector/pkg/localcapture"
+	"github.com/bugit/dre-engine/pkg/captureattach"
 	"github.com/bugit/dre-engine/pkg/discover"
 	"github.com/bugit/dre-engine/pkg/project"
 )
@@ -275,11 +278,43 @@ func runDoctor(args []string) {
 
 	rootPath := project.FindCaptureRoot(*root)
 	layout := project.LayoutFor(rootPath)
+	disc := discover.Discover(*root)
 	fmt.Println("BugIT doctor", version)
 	fmt.Println("OS:", runtime.GOOS, runtime.GOARCH)
 	fmt.Println("Capture root:", rootPath)
 	fmt.Println("BugIT dir:", layout.BugitDir)
 	fmt.Println("Public URL:", localcapture.PublicURL(*root))
+	fmt.Println("Backend port:", disc.BackendPort)
+	if discover.IsListening("127.0.0.1", disc.BackendPort) {
+		fmt.Println("OK backend listening on :" + fmt.Sprint(disc.BackendPort))
+		if disc.BackendPID > 0 {
+			fmt.Println("Backend PID:", disc.BackendPID)
+		}
+	} else {
+		fmt.Println("WARN backend not listening on :" + fmt.Sprint(disc.BackendPort))
+	}
+
+	nodeVer := runCmdOutput("node", "-v")
+	if nodeVer == "" {
+		fmt.Println("WARN node not found — attach capture requires Node >=18")
+	} else {
+		fmt.Println("Node:", nodeVer)
+		if nodeMajor(nodeVer) >= 18 {
+			fmt.Println("OK inbound attach capture supported (diagnostics_channel)")
+		} else {
+			fmt.Println("WARN Node >=18 required for inbound attach capture")
+		}
+	}
+
+	inspectPort := disc.InspectPort
+	if inspectPort <= 0 {
+		inspectPort = 9229
+	}
+	if captureattach.InspectAvailable(inspectPort) {
+		fmt.Printf("OK Node inspector on :%d\n", inspectPort)
+	} else {
+		fmt.Printf("WARN Node inspector not on :%d — BugIT can enable it on attach\n", inspectPort)
+	}
 
 	replayBin := resolveReplayBin()
 	if _, err := exec.LookPath(replayBin); err != nil {
@@ -291,6 +326,24 @@ func runDoctor(args []string) {
 	} else {
 		fmt.Println("OK dre-replay:", replayBin)
 	}
+}
+
+func runCmdOutput(name string, args ...string) string {
+	out, err := exec.Command(name, args...).Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+func nodeMajor(version string) int {
+	version = strings.TrimPrefix(strings.TrimSpace(version), "v")
+	parts := strings.SplitN(version, ".", 2)
+	if len(parts) == 0 {
+		return 0
+	}
+	major, _ := strconv.Atoi(parts[0])
+	return major
 }
 
 func openVSCode(root, snap string) error {

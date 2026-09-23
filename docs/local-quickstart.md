@@ -28,7 +28,7 @@ bugit doctor
 1. Open your project in VS Code (whole repo or `backend/` — both work)
 2. **Start your app normally** — run backend and frontend as you always do
 3. Open the **BugIT** sidebar → click **Record**
-4. BugIT auto-detects your backend port and attaches (no manual `bugit.yaml` edits)
+4. BugIT auto-detects your backend port and attaches — inbound API traffic (4xx/5xx) is captured automatically
 5. Use your app at its normal URLs (e.g. frontend `http://localhost:3000`, API `http://localhost:4000`)
 6. Reproduce the bug
 7. Click **Stop & Save** — timeline opens automatically
@@ -79,7 +79,8 @@ your-project/
 | Issue | Fix |
 |-------|-----|
 | Sidebar buttons do nothing | Reload VS Code; ensure a folder is open |
-| No snapshot after Stop | Send at least one API request while recording; retry Stop |
+| No snapshot after Stop | Use your app so API requests hit the backend port; retry Stop within 30s of the error |
+| Empty timeline / 0 events | Ensure backend is Node >=18; run `bugit doctor`; confirm API calls reach backend (not just frontend) |
 | Recording won't stop | Click **Force Stop** |
 | Attach failed | Ensure backend is running; try `NODE_OPTIONS=--inspect` on backend |
 | Spawn fallback when backend is up | Check backend port matches `.env` / `NEXT_PUBLIC_API_URL` |

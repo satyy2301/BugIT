@@ -7,22 +7,27 @@ import (
 )
 
 func TestHandleResponseFormatsHTTPError(t *testing.T) {
-	tap := &NetworkTap{comm: "node", sink: func(evt ioevent.IOEvent) {
-		payload := string(evt.Payload[:evt.PayloadLen])
-		if evt.IsWrite != 0 {
-			t.Fatalf("response should be read direction")
-		}
-		if !contains(payload, "HTTP/1.1 404") {
-			t.Fatalf("payload %q", payload)
-		}
-	}}
-	tap.handleResponse(map[string]interface{}{
+	var got ioevent.IOEvent
+	tap := &AttachTap{
+		comm: "node",
+		sink: func(evt ioevent.IOEvent) {
+			got = evt
+		},
+	}
+	tap.handleOutboundResponse(map[string]interface{}{
 		"response": map[string]interface{}{
 			"status":     float64(404),
 			"statusText": "Not Found",
 			"url":        "http://127.0.0.1:4000/auth/signin",
 		},
 	})
+	payload := string(got.Payload[:got.PayloadLen])
+	if got.IsWrite != 0 {
+		t.Fatalf("response should be read direction")
+	}
+	if !contains(payload, "HTTP/1.1 404") {
+		t.Fatalf("payload %q", payload)
+	}
 }
 
 func contains(s, sub string) bool {

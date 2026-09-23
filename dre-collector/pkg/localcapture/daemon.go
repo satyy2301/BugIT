@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"os/exec"
@@ -81,6 +82,11 @@ func StartDaemon(ctx context.Context, root string, opts DaemonOptions) (*Daemon,
 	os.Setenv("DRE_SNAPSHOT_KEY", cfg.SnapshotKey)
 	os.Setenv("DRE_LEADER_ELECT", "0")
 	os.Setenv("DRE_LOCAL_MODE", "1")
+	if cfg.Trigger4xx {
+		os.Setenv("DRE_TRIGGER_4XX", "1")
+	} else {
+		os.Unsetenv("DRE_TRIGGER_4XX")
+	}
 
 	grpcHost, grpcPort := splitHostPort(cfg.CollectorGRPC, "29090")
 	httpHost, httpPort := splitHTTP(cfg.CollectorHTTP, "28080")
@@ -120,7 +126,9 @@ func StartDaemon(ctx context.Context, root string, opts DaemonOptions) (*Daemon,
 	}
 
 	eventSink := func(evt ioevent.IOEvent) {
-		_ = d.postEvent(evt)
+		if err := d.postEvent(evt); err != nil {
+			log.Printf("capture ingest: %v", err)
+		}
 		if isHTTPError(evt) {
 			idx := int(evt.Fd)
 			if ref := d.captureSourceRef(); ref != nil {
