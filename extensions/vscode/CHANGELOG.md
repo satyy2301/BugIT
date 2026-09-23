@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.1.2
+
+- Attach mode captures **inbound backend API traffic** (4xx/5xx) while backend + frontend keep running
+- ServerTap via Node `diagnostics_channel` — full HTTP request/response payloads in snapshots
+- Smarter Node inspector target selection (backend PID/port vs Next.js dev server)
+- Ingest errors logged instead of silently dropped; clearer Record status and zero-event warnings
+- `bugit doctor` reports Node version, backend port, and inspector readiness
+- Optional `trigger_4xx: true` in `.bugit/bugit.yaml` for auto-snapshot on 4xx responses
+
 ## 1.1.1
 
 - Fix stale bundled CLI: packaging now rebuilds and verifies binaries before VSIX publish

@@ -20,7 +20,7 @@ import (
 	"github.com/bugit/dre-engine/pkg/project"
 )
 
-const version = "1.1.1"
+const version = "1.1.2"
 
 func main() {
 	if len(os.Args) < 2 {
