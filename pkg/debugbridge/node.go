@@ -2,70 +2,78 @@ package debugbridge
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/bugit/dre-engine/api/manifest"
+	"github.com/bugit/dre-engine/pkg/captureattach"
 	"golang.org/x/net/websocket"
 )
 
 type NodeBridge struct {
 	port   int
+	wsURL  string
+	pick   captureattach.TargetPickOptions
 	conn   *websocket.Conn
 	mu     sync.Mutex
 	nextID int
 }
 
-func NewNodeBridge(port int) *NodeBridge {
+func NewNodeBridge(port int, pick captureattach.TargetPickOptions) *NodeBridge {
 	if port == 0 {
 		port = 9229
 	}
-	return &NodeBridge{port: port}
+	return &NodeBridge{port: port, pick: pick}
+}
+
+func NewNodeBridgeWS(wsURL string) *NodeBridge {
+	return &NodeBridge{wsURL: wsURL}
 }
 
 func (n *NodeBridge) Connect(ctx context.Context) error {
-	deadline := time.Now().Add(15 * time.Second)
-	var wsURL string
+	if n.wsURL != "" {
+		return n.connectWS(ctx, n.wsURL)
+	}
+	deadline := time.Now().Add(20 * time.Second)
 	for time.Now().Before(deadline) {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		default:
 		}
-		resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d/json/list", n.port))
-		if err == nil {
-			var targets []struct {
-				WebSocketDebuggerURL string `json:"webSocketDebuggerUrl"`
-			}
-			body, _ := io.ReadAll(resp.Body)
-			resp.Body.Close()
-			_ = json.Unmarshal(body, &targets)
-			for _, t := range targets {
-				if t.WebSocketDebuggerURL != "" {
-					wsURL = t.WebSocketDebuggerURL
-					break
-				}
-			}
+		if insp, err := captureattach.ResolveBackendInspector(n.pick); err == nil && insp.WebSocketURL != "" {
+			return n.connectWS(ctx, insp.WebSocketURL)
 		}
-		if wsURL != "" {
-			break
+		for port := captureattach.InspectorPortMin; port <= captureattach.InspectorPortMax; port++ {
+			targets, err := captureattach.ListInspectTargets(port)
+			if err != nil {
+				continue
+			}
+			if ws := captureattach.PickInspectTarget(targets, n.pick); ws != "" {
+				return n.connectWS(ctx, ws)
+			}
 		}
 		time.Sleep(300 * time.Millisecond)
 	}
-	if wsURL == "" {
-		return fmt.Errorf("node inspector not available on port %d", n.port)
+	return fmt.Errorf("node inspector not available on port %d", n.port)
+}
+
+func (n *NodeBridge) connectWS(ctx context.Context, wsURL string) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
 	}
+	n.mu.Lock()
+	defer n.mu.Unlock()
 	conn, err := websocket.Dial(wsURL, "", "http://localhost")
 	if err != nil {
 		return err
 	}
 	n.conn = conn
-	return n.send("Runtime.enable", nil)
+	return n.sendLocked("Runtime.enable", nil)
 }
 
 func (n *NodeBridge) TopFrame() (*manifest.SourceRef, error) {
@@ -74,14 +82,19 @@ func (n *NodeBridge) TopFrame() (*manifest.SourceRef, error) {
 	if n.conn == nil {
 		return nil, fmt.Errorf("not connected")
 	}
-	resp, err := n.call("Runtime.evaluate", map[string]interface{}{
-		"expression": "(new Error()).stack",
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	resp, err := n.callLocked(ctx, "Runtime.evaluate", map[string]interface{}{
+		"expression":    "(new Error()).stack",
 		"returnByValue": true,
 	})
 	if err != nil {
 		return nil, err
 	}
-	stack, _ := resp["result"].(map[string]interface{})["value"].(string)
+	stack, ok := resp["value"].(string)
+	if !ok || stack == "" {
+		return nil, nil
+	}
 	return parseNodeStack(stack), nil
 }
 
@@ -90,7 +103,6 @@ func parseNodeStack(stack string) *manifest.SourceRef {
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
 		if strings.HasPrefix(line, "at ") && strings.Contains(line, ":") {
-			// at fn (file:line:col) or at file:line:col
 			start := strings.Index(line, "(")
 			end := strings.LastIndex(line, ")")
 			loc := line
@@ -101,23 +113,32 @@ func parseNodeStack(stack string) *manifest.SourceRef {
 			} else {
 				loc = strings.TrimSpace(strings.TrimPrefix(line, "at "))
 			}
-			parts := strings.Split(loc, ":")
-			if len(parts) < 2 {
-				continue
-			}
-			file := strings.Join(parts[:len(parts)-2], ":")
+			file, lineNo, col := parseStackLocation(loc)
 			if file == "" {
-				file = parts[0]
-			}
-			lineNo, col := 0, 0
-			fmt.Sscanf(parts[len(parts)-2], "%d", &lineNo)
-			if len(parts) >= 3 {
-				fmt.Sscanf(parts[len(parts)-1], "%d", &col)
+				continue
 			}
 			return &manifest.SourceRef{File: file, Line: lineNo, Column: col, Function: fn}
 		}
 	}
 	return nil
+}
+
+func parseStackLocation(loc string) (file string, line int, col int) {
+	lastColon := strings.LastIndex(loc, ":")
+	if lastColon < 0 {
+		return loc, 0, 0
+	}
+	colPart := loc[lastColon+1:]
+	rest := loc[:lastColon]
+	lineColon := strings.LastIndex(rest, ":")
+	if lineColon < 0 {
+		return loc, 0, 0
+	}
+	linePart := rest[lineColon+1:]
+	file = rest[:lineColon]
+	fmt.Sscanf(linePart, "%d", &line)
+	fmt.Sscanf(colPart, "%d", &col)
+	return file, line, col
 }
 
 func (n *NodeBridge) Close() {
@@ -130,18 +151,40 @@ func (n *NodeBridge) Close() {
 }
 
 func (n *NodeBridge) send(method string, params map[string]interface{}) error {
-	_, err := n.call(method, params)
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return n.sendLocked(method, params)
+}
+
+func (n *NodeBridge) sendLocked(method string, params map[string]interface{}) error {
+	_, err := n.callLocked(context.Background(), method, params)
 	return err
 }
 
 func (n *NodeBridge) call(method string, params map[string]interface{}) (map[string]interface{}, error) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return n.callLocked(context.Background(), method, params)
+}
+
+func (n *NodeBridge) callLocked(ctx context.Context, method string, params map[string]interface{}) (map[string]interface{}, error) {
+	if n.conn == nil {
+		return nil, fmt.Errorf("not connected")
+	}
 	n.nextID++
 	id := n.nextID
 	msg := map[string]interface{}{"id": id, "method": method, "params": params}
 	if err := websocket.JSON.Send(n.conn, msg); err != nil {
 		return nil, err
 	}
+	deadline := time.Now().Add(15 * time.Second)
 	for {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		if time.Now().After(deadline) {
+			return nil, fmt.Errorf("cdp call timeout for %s", method)
+		}
 		var resp map[string]interface{}
 		if err := websocket.JSON.Receive(n.conn, &resp); err != nil {
 			return nil, err

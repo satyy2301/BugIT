@@ -32,16 +32,13 @@ func Discover(workspace string) Result {
 	res := Result{
 		Workspace:   abs,
 		CaptureRoot: root,
-		BackendPort: project.DetectPublicPort(root),
+		BackendPort: project.ResolveBackendPort(abs, root),
 	}
 
 	for _, rel := range []string{".", "web", "frontend", "client", "apps/web"} {
-		dir := rel
+		dir := abs
 		if rel != "." {
 			dir = filepath.Join(abs, rel)
-		}
-		if p := portFromEnvFiles(dir); p > 0 && res.BackendPort == project.DetectPublicPort(root) {
-			// keep backend from capture root unless only found in web api url
 		}
 		if p := apiURLFromEnv(dir); p > 0 {
 			res.BackendPort = p
@@ -63,32 +60,6 @@ func Discover(workspace string) Result {
 	}
 	res.InspectPort = FindInspectPortForBackend(res.BackendPort, res.BackendPID, res.CaptureRoot)
 	return res
-}
-
-func portFromEnvFiles(dir string) int {
-	for _, name := range []string{".env", ".env.local", ".env.development"} {
-		if p := portFromEnvFile(filepath.Join(dir, name)); p > 0 {
-			return p
-		}
-	}
-	return 0
-}
-
-func portFromEnvFile(path string) int {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return 0
-	}
-	for _, line := range strings.Split(string(data), "\n") {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "PORT=") {
-			v := strings.Trim(strings.TrimPrefix(line, "PORT="), "\"'")
-			if p, err := strconv.Atoi(v); err == nil && p > 0 {
-				return p
-			}
-		}
-	}
-	return 0
 }
 
 func apiURLFromEnv(dir string) int {
@@ -164,16 +135,15 @@ func FindInspectPortForBackend(backendPort, backendPID int, captureRoot string) 
 		BackendPID:  backendPID,
 		CaptureRoot: captureRoot,
 	}
-	bestPort := 0
-	bestScore := -1
-	for _, port := range []int{9229, 9230, 9231, 9232} {
-		score := captureattach.ScoreInspectPort(port, opts)
-		if score > bestScore {
-			bestScore = score
-			bestPort = port
+	insp, err := captureattach.ResolveBackendInspector(opts)
+	if err != nil {
+		cfg, _ := project.LoadConfig(filepath.Join(captureRoot, project.DirName, project.ConfigName))
+		if cfg.InspectPort > 0 {
+			return cfg.InspectPort
 		}
+		return 0
 	}
-	return bestPort
+	return insp.Port
 }
 
 func itoa(n int) string {

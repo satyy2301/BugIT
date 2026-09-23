@@ -149,9 +149,9 @@ func ResolveCaptureTarget(workspace string) CaptureTarget {
 	cfgPath := filepath.Join(root, DirName, ConfigName)
 	cfg, _ := LoadConfig(cfgPath)
 
-	detected := DetectPublicPort(root)
+	detected := ResolveBackendPort(workspace, root)
 	port := cfg.AppPort
-	if port <= 0 || port != detected {
+	if port <= 0 {
 		port = detected
 	}
 
@@ -197,15 +197,7 @@ func ParseDevCommand(cmd string) []string {
 }
 
 func DetectPublicPort(root string) int {
-	for _, name := range []string{".env", ".env.local", ".env.development"} {
-		if p := portFromEnvFile(filepath.Join(root, name)); p > 0 {
-			return p
-		}
-	}
-	if hasDevPackageJSON(root) {
-		return 4000
-	}
-	return 3000
+	return ResolveBackendPort(root, root)
 }
 
 func portFromEnvFile(path string) int {
@@ -228,11 +220,14 @@ func portFromEnvFile(path string) int {
 // PrepareConfig updates cfg for capture: public port on proxy, internal offset for app.
 func PrepareConfig(root string, cfg Config) Config {
 	if cfg.AppPort <= 0 {
-		cfg.AppPort = DetectPublicPort(root)
+		cfg.AppPort = ResolveBackendPort(root, root)
 	}
 	cfg.RecordProxy = fmtHostPort("127.0.0.1", cfg.AppPort)
 	if cfg.DevCommand == "" {
 		cfg.DevCommand = DetectDevCommand(root)
+	}
+	if cfg.InspectPort <= 0 {
+		cfg.InspectPort = DefaultConfig().InspectPort
 	}
 	cfg.CaptureRoot = root
 	return cfg
@@ -312,7 +307,11 @@ func SyncWorkspaceConfig(workspace string) (Layout, Config, error) {
 	if err != nil {
 		return layout, Config{}, err
 	}
+	existingInspect := cfg.InspectPort
 	cfg = PrepareConfig(root, cfg)
+	if existingInspect > 0 {
+		cfg.InspectPort = existingInspect
+	}
 	if err := SaveConfig(layout.ConfigPath, cfg); err != nil {
 		return layout, cfg, err
 	}

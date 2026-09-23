@@ -20,7 +20,9 @@ import (
 	"github.com/bugit/dre-engine/api/manifest"
 	"github.com/bugit/dre-engine/dre-collector/internal/leader"
 	"github.com/bugit/dre-engine/dre-collector/internal/server"
+	"github.com/bugit/dre-engine/pkg/captureattach"
 	"github.com/bugit/dre-engine/pkg/debugbridge"
+	"github.com/bugit/dre-engine/pkg/discover"
 	"github.com/bugit/dre-engine/pkg/project"
 	"github.com/bugit/dre-engine/pkg/recordproxy"
 	"github.com/bugit/dre-engine/pkg/runtimedetect"
@@ -154,8 +156,14 @@ func StartDaemon(ctx context.Context, root string, opts DaemonOptions) (*Daemon,
 		}
 
 		if rt.Runtime == runtimedetect.RuntimeNode {
-			d.debugger = debugbridge.NewNodeBridge(cfg.InspectPort)
-			_ = d.debugger.Connect(runCtx)
+			pick := captureattach.TargetPickOptions{
+				BackendPort: cfg.AppPort,
+				CaptureRoot: captureRoot,
+			}
+			d.debugger = debugbridge.NewNodeBridge(cfg.InspectPort, pick)
+			if err := d.debugger.Connect(runCtx); err != nil {
+				fmt.Fprintf(os.Stderr, "WARN: debugger bridge: %v\n", err)
+			}
 		}
 	}
 
@@ -253,6 +261,13 @@ func RunCapture(ctx context.Context, opts CaptureOptions) (string, error) {
 // RunCaptureAuto detects dev command and ports from workspace.
 func RunCaptureAuto(ctx context.Context, workspace string, saveOnExit bool, detail string) (string, error) {
 	target := project.ResolveCaptureTarget(workspace)
+	if discover.IsListening("127.0.0.1", target.PublicPort) {
+		return "", fmt.Errorf("backend already listening on :%d — use bugit record to attach instead of capture --auto", target.PublicPort)
+	}
+	internalPort := project.InternalPort(target.PublicPort)
+	if discover.IsListening("127.0.0.1", internalPort) {
+		return "", fmt.Errorf("internal port :%d already in use — stop the conflicting process or use bugit record", internalPort)
+	}
 	return RunCapture(ctx, CaptureOptions{
 		Root:       workspace,
 		Command:    target.DevCommand,

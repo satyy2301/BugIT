@@ -24,18 +24,30 @@ func RunAttachRecord(ctx context.Context, workspace string, disc discover.Result
 	}
 	defer daemon.Stop()
 
-	inspectPort := disc.InspectPort
-	if inspectPort <= 0 {
-		inspectPort = cfg.InspectPort
+	if err := project.SyncPreloadHook(disc.CaptureRoot, cfg.CollectorHTTP); err != nil {
+		fmt.Fprintf(os.Stderr, "WARN: preload sync: %v\n", err)
 	}
-	if !captureattach.InspectAvailable(inspectPort) && disc.BackendPID > 0 {
-		fmt.Fprintf(os.Stderr, "Enabling Node inspector on pid %d\n", disc.BackendPID)
-		if err := captureattach.EnableNodeInspect(disc.BackendPID); err != nil {
-			fmt.Fprintf(os.Stderr, "WARN: EnableNodeInspect: %v\n", err)
-		}
-		time.Sleep(800 * time.Millisecond)
-		if p := discover.FindInspectPortForBackend(disc.BackendPort, disc.BackendPID, disc.CaptureRoot); p > 0 {
-			inspectPort = p
+
+	pickOpts := captureattach.TargetPickOptions{
+		BackendPort: disc.BackendPort,
+		BackendPID:  disc.BackendPID,
+		CaptureRoot: disc.CaptureRoot,
+	}
+
+	var inspector captureattach.BackendInspector
+	var attachErr error
+	if disc.BackendPID > 0 {
+		fmt.Fprintf(os.Stderr, "Enabling Node inspector on backend pid %d\n", disc.BackendPID)
+		inspector, attachErr = captureattach.PrepareBackendInspector(disc.CaptureRoot, disc.BackendPID, pickOpts)
+	} else {
+		inspector, attachErr = captureattach.ResolveBackendInspector(pickOpts)
+	}
+	preloadActive := discover.ProcessHasBugITPreload(disc.BackendPID)
+	if attachErr != nil {
+		if preloadActive {
+			fmt.Fprintf(os.Stdout, "BugIT capturing inbound HTTP on :%d (preload mode)\n", disc.BackendPort)
+		} else {
+			return "", fmt.Errorf("resolve backend inspector: %w", attachErr)
 		}
 	}
 
@@ -54,43 +66,69 @@ func RunAttachRecord(ctx context.Context, workspace string, disc discover.Result
 		}
 	}
 
-	tap, err := captureattach.StartAttachTap(ctx, captureattach.AttachOptions{
-		InspectPort: inspectPort,
-		BackendPort: disc.BackendPort,
-		BackendPID:  disc.BackendPID,
-		CaptureRoot: disc.CaptureRoot,
-		Comm:        comm,
-		Sink:        sink,
-	})
-	if err != nil {
-		return "", err
-	}
-	defer tap.Close()
-
-	if rt.Runtime == runtimedetect.RuntimeNode {
-		daemon.debugger = debugbridge.NewNodeBridge(inspectPort)
-		if err := daemon.debugger.Connect(ctx); err != nil {
-			fmt.Fprintf(os.Stderr, "WARN: debugger bridge: %v\n", err)
+	var tap *captureattach.AttachTap
+	if attachErr == nil {
+		var err error
+		tap, err = captureattach.StartAttachTap(ctx, captureattach.AttachOptions{
+			InspectPort:     inspector.Port,
+			InspectorWSURL:  inspector.WebSocketURL,
+			InspectorTarget: inspector,
+			BackendPort:     disc.BackendPort,
+			BackendPID:      disc.BackendPID,
+			CaptureRoot:     disc.CaptureRoot,
+			Comm:            comm,
+			Sink:            sink,
+			DisablePreload:  preloadActive,
+		})
+		if err != nil {
+			if preloadActive {
+				fmt.Fprintf(os.Stderr, "WARN: CDP attach failed (%v) — continuing with preload ingest\n", err)
+			} else {
+				return "", err
+			}
+		} else {
+			defer tap.Close()
+			if rt.Runtime == runtimedetect.RuntimeNode {
+				daemon.debugger = debugbridge.NewNodeBridgeWS(inspector.WebSocketURL)
+				if err := daemon.debugger.Connect(ctx); err != nil {
+					fmt.Fprintf(os.Stderr, "WARN: debugger bridge: %v\n", err)
+				}
+			}
+			target := tap.Target()
+			fmt.Fprintf(os.Stdout, "BugIT attached to backend on :%d (inspector :%d)\n", disc.BackendPort, inspector.Port)
+			fmt.Fprintf(os.Stdout, "BugIT capturing inbound + outbound HTTP on :%d — target %s (%s)\n", disc.BackendPort, target.Title, target.URL)
 		}
+	} else if project.IsDevScriptPatched(disc.CaptureRoot) {
+		fmt.Fprintf(os.Stdout, "BugIT configured backend inspector — restart backend (%s), then Record again\n", project.RecommendedRestartCommand(disc.CaptureRoot))
 	}
-
-	fmt.Fprintf(os.Stdout, "BugIT attached to backend on :%d (inspector :%d)\n", disc.BackendPort, inspectPort)
-	fmt.Fprintf(os.Stdout, "BugIT capturing inbound + outbound HTTP on :%d\n", disc.BackendPort)
 
 	<-ctx.Done()
 
-	if tap.InboundCount() == 0 && eventCount == 0 {
-		fmt.Fprintf(os.Stderr, "WARN: no HTTP events captured — ensure Node >=18, API traffic hits :%d, and inspector is connected\n", disc.BackendPort)
+	inboundCount := int64(0)
+	if tap != nil {
+		inboundCount = tap.InboundCount()
+	}
+	if inboundCount == 0 && eventCount == 0 {
+		if project.IsDevScriptPatched(disc.CaptureRoot) && !preloadActive {
+			fmt.Fprintf(os.Stderr, "WARN: no HTTP events captured — restart backend (%s), use the app, then Stop & Save again\n", project.RecommendedRestartCommand(disc.CaptureRoot))
+		} else {
+			fmt.Fprintf(os.Stderr, "WARN: no HTTP events captured — likely attached to wrong Node process earlier; retry Record after backend restart\n")
+		}
 	}
 
 	var snapPath string
+	var snapErr error
 	if saveOnExit {
 		time.Sleep(300 * time.Millisecond)
-		snapPath, _ = daemon.triggerSnapshot("interrupt")
+		snapPath, snapErr = daemon.triggerSnapshot("interrupt")
 	}
 	if snapPath == "" && saveOnExit {
-		snapPath, _ = daemon.triggerSnapshot(detail)
+		snapPath, snapErr = daemon.triggerSnapshot(detail)
 	}
+	if saveOnExit && snapPath == "" && snapErr != nil {
+		return "", fmt.Errorf("snapshot failed: %w", snapErr)
+	}
+	_ = cfg
 	return snapPath, nil
 }
 

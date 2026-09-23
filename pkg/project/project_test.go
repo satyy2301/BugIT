@@ -36,6 +36,19 @@ func TestDetectDevCommand(t *testing.T) {
 	}
 }
 
+func TestResolveBackendPortFromFrontendAPIURL(t *testing.T) {
+	root := t.TempDir()
+	_ = os.MkdirAll(filepath.Join(root, "backend"), 0o755)
+	_ = os.MkdirAll(filepath.Join(root, "web"), 0o755)
+	_ = os.WriteFile(filepath.Join(root, "backend", "package.json"), []byte(`{"scripts":{"dev":"node"}}`), 0o644)
+	_ = os.WriteFile(filepath.Join(root, "web", ".env"), []byte("API_URL=http://localhost:5000\n"), 0o644)
+
+	captureRoot := filepath.Join(root, "backend")
+	if p := ResolveBackendPort(root, captureRoot); p != 5000 {
+		t.Fatalf("port %d want 5000", p)
+	}
+}
+
 func TestSyncWorkspaceConfig(t *testing.T) {
 	root := t.TempDir()
 	_ = os.WriteFile(filepath.Join(root, ".env"), []byte("PORT=4000\n"), 0o644)

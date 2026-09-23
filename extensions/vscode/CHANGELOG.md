@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.1.4
+
+- Fix MERN monorepo inspector conflict: when Next.js owns :9229, BugIT auto-patches backend dev script to use inspector :9230+
+- Direct HTTP ingest preload (`.bugit/preload.cjs`) — captures inbound API traffic after one backend restart without CDP
+- Target diff polling prefers newly appeared backend targets on non-9229 ports
+- Removed harmful `capture --auto` fallback when attach fails and backend is already running (no more EADDRINUSE crash)
+- `bugit doctor` shows inspect bootstrap/preload status and recommended restart command
+- VS Code shows actionable restart guidance and optional copy restart command
+
+## 1.1.3
+
+- Fix attach attaching to Next.js inspector on :9229 instead of Express backend — always enables backend inspector and resolves target by file path
+- Scan inspector ports 9229–9239; score targets by backend `server.js` / capture root path; disqualify Next.js/:3000 targets
+- Post-inject health check (hook ready + binding ping) before recording starts
+- Log chosen inspector target; improved doctor output listing all targets with scores
+- NodeBridge reuses the same backend inspector WebSocket URL as attach capture
+
 ## 1.1.2
 
 - Attach mode captures **inbound backend API traffic** (4xx/5xx) while backend + frontend keep running

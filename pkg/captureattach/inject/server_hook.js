@@ -1,5 +1,7 @@
 (function () {
-  if (global.__bugitServerTap) return true;
+  if (global.__bugitServerTap) {
+    return !!(global.__bugitServerTapReady && global.__bugitServerTapReady.subscribed);
+  }
   global.__bugitServerTap = true;
 
   var MAX = 2048;
@@ -52,7 +54,10 @@
 
   var dc = loadDiagnostics();
   var http = loadHTTP();
-  if (!dc || !http) return false;
+  if (!dc || !http) {
+    global.__bugitServerTap = false;
+    return false;
+  }
 
   var sessions = new WeakMap();
   var ServerResponse = http.ServerResponse;
@@ -107,25 +112,36 @@
     return wire;
   }
 
+  function emitRequest(req, sess) {
+    if (sess.emittedRequest) return;
+    sess.emittedRequest = true;
+    emit(1, buildRequestWire(req, sess.reqBody));
+  }
+
   dc.channel('http.server.request.start').subscribe(function (msg) {
     var req = msg && msg.request;
     var res = msg && msg.response;
     if (!req || !res) return;
 
-    var sess = { reqBody: Buffer.alloc(0), resBody: Buffer.alloc(0) };
+    var sess = { reqBody: Buffer.alloc(0), resBody: Buffer.alloc(0), emittedRequest: false };
     sessions.set(res, sess);
 
-    req.on('data', function (chunk) {
-      sess.reqBody = Buffer.concat([sess.reqBody, chunk]).slice(0, MAX);
-    });
-
-    req.on('end', function () {
-      emit(1, buildRequestWire(req, sess.reqBody));
-    });
+    if (req.readableEnded || req.complete) {
+      emitRequest(req, sess);
+    } else {
+      req.on('data', function (chunk) {
+        sess.reqBody = Buffer.concat([sess.reqBody, chunk]).slice(0, MAX);
+      });
+      req.on('end', function () {
+        emitRequest(req, sess);
+      });
+      req.on('aborted', function () {
+        emitRequest(req, sess);
+      });
+    }
   });
 
   dc.channel('http.server.response.finish').subscribe(function (msg) {
-    var req = msg && msg.request;
     var res = msg && msg.response;
     if (!res) return;
     var sess = sessions.get(res);
@@ -134,5 +150,6 @@
     sessions.delete(res);
   });
 
+  global.__bugitServerTapReady = { subscribed: true };
   return true;
 })();

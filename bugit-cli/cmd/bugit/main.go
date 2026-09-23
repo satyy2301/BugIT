@@ -20,7 +20,7 @@ import (
 	"github.com/bugit/dre-engine/pkg/project"
 )
 
-const version = "1.1.2"
+const version = "1.1.4"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -73,9 +73,14 @@ func runCapture(args []string) {
 	if *mode == "cluster" {
 		fatal(fmt.Errorf("cluster mode: use dre-agent + dre-cli trigger (see docs/runbooks/)"))
 	}
+	if *mode != "local" {
+		fatal(fmt.Errorf("unknown capture mode %q (supported: local)", *mode))
+	}
 
 	rootPath, _ := filepath.Abs(*root)
-	_, _, _ = project.SyncWorkspaceConfig(rootPath)
+	if _, _, err := project.SyncWorkspaceConfig(rootPath); err != nil {
+		fatal(err)
+	}
 	target := project.ResolveCaptureTarget(rootPath)
 
 	fmt.Printf("BugIT capture in %s\n", target.Root)
@@ -312,8 +317,58 @@ func runDoctor(args []string) {
 	}
 	if captureattach.InspectAvailable(inspectPort) {
 		fmt.Printf("OK Node inspector on :%d\n", inspectPort)
+		if inspectPort == 9229 {
+			for _, group := range captureattach.ListAllInspectTargets() {
+				for _, t := range group.Targets {
+					joined := strings.ToLower(t.Title + " " + t.URL)
+					if strings.Contains(joined, "next.js") || strings.Contains(joined, "next dev") {
+						fmt.Println("WARN :9229 inspector target looks like Next.js — backend should use :9230+ after BugIT dev-script patch")
+						break
+					}
+				}
+			}
+		}
 	} else {
-		fmt.Printf("WARN Node inspector not on :%d — BugIT can enable it on attach\n", inspectPort)
+		fmt.Printf("WARN Node inspector not on :%d — BugIT will enable it on the backend during Record\n", inspectPort)
+	}
+
+	if project.IsDevScriptPatched(rootPath) {
+		fmt.Println("OK backend dev script patched for BugIT inspect bootstrap")
+	} else {
+		fmt.Println("WARN backend dev script not patched — Record once to auto-configure, then restart backend")
+	}
+	if project.IsPreloadConfigured(rootPath) {
+		fmt.Println("OK BugIT preload hook present (.bugit/preload.cjs)")
+	} else {
+		fmt.Println("WARN preload hook missing — Record once to generate it")
+	}
+	if disc.BackendPID > 0 && discover.ProcessHasBugITPreload(disc.BackendPID) {
+		fmt.Println("OK backend process loaded BugIT preload (direct HTTP ingest)")
+	} else if project.IsDevScriptPatched(rootPath) {
+		fmt.Printf("Restart backend: %s\n", project.RecommendedRestartCommand(rootPath))
+	}
+
+	pickOpts := captureattach.TargetPickOptions{
+		BackendPort: disc.BackendPort,
+		BackendPID:  disc.BackendPID,
+		CaptureRoot: disc.CaptureRoot,
+	}
+	fmt.Println("Inspector targets (9229-9239):")
+	found := false
+	for _, group := range captureattach.ListAllInspectTargets() {
+		found = true
+		for _, t := range group.Targets {
+			score := captureattach.ScoreTarget(t, pickOpts)
+			fmt.Printf("  :%d score=%d title=%q url=%q\n", group.Port, score, t.Title, t.URL)
+		}
+	}
+	if !found {
+		fmt.Println("  (none — start backend/frontend, then run doctor again)")
+	}
+	if insp, err := captureattach.ResolveBackendInspector(pickOpts); err != nil {
+		fmt.Println("WARN backend inspector target:", err)
+	} else {
+		fmt.Printf("OK backend inspector target on :%d score=%d %s (%s)\n", insp.Port, insp.Score, insp.Title, insp.URL)
 	}
 
 	replayBin := resolveReplayBin()
@@ -384,10 +439,10 @@ func usage() {
 	fmt.Println(`bugit — plug-and-play local bug capture and replay
 
 Commands:
-  bugit record [--root PATH]
-  bugit capture [--auto] [--root PATH]
+  bugit record [--save-on-exit] [--detail TEXT] [--root PATH]
+  bugit capture [--auto] [--save-on-exit] [--detail TEXT] [--mode local] [--root PATH]
   bugit capture [--root PATH] -- <command...>
-  bugit replay [--dre PATH] [--root PATH]
+  bugit replay [--dre PATH] [--open-source-at N] [--root PATH]
   bugit open [--dre PATH] [--root PATH]
   bugit snapshot [--detail TEXT] [--root PATH]
   bugit snapshots list [--root PATH]

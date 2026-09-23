@@ -18,12 +18,15 @@ var serverHookJS string
 
 // AttachOptions configures hybrid attach capture (inbound server + outbound network).
 type AttachOptions struct {
-	InspectPort int
-	BackendPort int
-	BackendPID  int
-	CaptureRoot string
-	Comm        string
-	Sink        EventSink
+	InspectPort   int
+	InspectorWSURL string
+	InspectorTarget BackendInspector
+	BackendPort   int
+	BackendPID    int
+	CaptureRoot   string
+	Comm           string
+	Sink           EventSink
+	DisablePreload bool
 }
 
 // AttachTap captures inbound HTTP via diagnostics_channel and outbound via CDP Network.
@@ -31,8 +34,10 @@ type AttachTap struct {
 	session      *CDPSession
 	sink         EventSink
 	comm         string
+	target       BackendInspector
 	nextFD       atomic.Int64
 	inboundCount atomic.Int64
+	pingSeen     atomic.Bool
 }
 
 // StartAttachTap connects to Node inspector and starts hybrid HTTP capture.
@@ -40,21 +45,27 @@ func StartAttachTap(ctx context.Context, opts AttachOptions) (*AttachTap, error)
 	if opts.Sink == nil {
 		return nil, fmt.Errorf("sink required")
 	}
-	if opts.InspectPort <= 0 {
-		opts.InspectPort = 9229
-	}
 	comm := opts.Comm
 	if comm == "" {
 		comm = "node"
 	}
 
-	pick := TargetPickOptions{
-		BackendPort: opts.BackendPort,
-		BackendPID:  opts.BackendPID,
-		CaptureRoot: opts.CaptureRoot,
+	var session *CDPSession
+	var err error
+	if opts.InspectorWSURL != "" {
+		session, err = ConnectCDPURL(ctx, opts.InspectorWSURL)
+	} else {
+		pick := TargetPickOptions{
+			BackendPort: opts.BackendPort,
+			BackendPID:  opts.BackendPID,
+			CaptureRoot: opts.CaptureRoot,
+		}
+		port := opts.InspectPort
+		if port <= 0 {
+			port = 9229
+		}
+		session, err = ConnectCDP(ctx, port, pick)
 	}
-
-	session, err := ConnectCDP(ctx, opts.InspectPort, pick)
 	if err != nil {
 		return nil, err
 	}
@@ -63,10 +74,11 @@ func StartAttachTap(ctx context.Context, opts AttachOptions) (*AttachTap, error)
 		session: session,
 		sink:    opts.Sink,
 		comm:    comm,
+		target:  opts.InspectorTarget,
 	}
 
 	tap.registerHandlers()
-	if err := tap.setup(ctx); err != nil {
+	if err := tap.setup(ctx, opts); err != nil {
 		session.Close()
 		return nil, err
 	}
@@ -79,13 +91,17 @@ func StartAttachTap(ctx context.Context, opts AttachOptions) (*AttachTap, error)
 	return tap, nil
 }
 
+func (t *AttachTap) Target() BackendInspector {
+	return t.target
+}
+
 func (t *AttachTap) registerHandlers() {
 	t.session.On("Network.requestWillBeSent", t.handleOutboundRequest)
 	t.session.On("Network.responseReceived", t.handleOutboundResponse)
 	t.session.On("Runtime.bindingCalled", t.handleBindingCalled)
 }
 
-func (t *AttachTap) setup(ctx context.Context) error {
+func (t *AttachTap) setup(ctx context.Context, opts AttachOptions) error {
 	if _, err := t.session.Call(ctx, "Runtime.enable", nil); err != nil {
 		return fmt.Errorf("Runtime.enable: %w", err)
 	}
@@ -105,23 +121,68 @@ func (t *AttachTap) setup(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("server hook inject: %w", err)
 	}
-	if ok := evalBool(result, "result", "value"); !ok {
-		return fmt.Errorf("server hook inject returned false — ensure Node >=18 with diagnostics_channel")
+	if ok := evalRemoteBool(result); !ok {
+		return fmt.Errorf("server hook inject returned false — ensure Node >=18 with diagnostics_channel on the backend process")
+	}
+
+	readyResult, err := t.session.Call(ctx, "Runtime.evaluate", map[string]interface{}{
+		"expression":    "global.__bugitServerTap === true && !!(global.__bugitServerTapReady && global.__bugitServerTapReady.subscribed)",
+		"returnByValue": true,
+	})
+	if err != nil {
+		return fmt.Errorf("server hook ready check: %w", err)
+	}
+	if ok := evalRemoteBool(readyResult); !ok {
+		return fmt.Errorf("attached to wrong Node process — hook not active; retry Record after backend inspector is enabled")
+	}
+
+	_, err = t.session.Call(ctx, "Runtime.evaluate", map[string]interface{}{
+		"expression":    `typeof bugitCapture === 'function' && bugitCapture(JSON.stringify({ping:true,dir:0,payload:"BugIT attach ping"}))`,
+		"returnByValue": true,
+	})
+	if err != nil {
+		return fmt.Errorf("server hook ping: %w", err)
+	}
+	if err := t.waitPing(ctx, 500*time.Millisecond); err != nil {
+		return fmt.Errorf("server hook binding not reachable: %w", err)
+	}
+	if opts.DisablePreload {
+		_, err = t.session.Call(ctx, "Runtime.evaluate", map[string]interface{}{
+			"expression": "global.__bugitPreloadDisabled = true",
+		})
+		if err != nil {
+			return fmt.Errorf("disable preload capture: %w", err)
+		}
 	}
 	return nil
 }
 
-func evalBool(result map[string]interface{}, keys ...string) bool {
-	cur := interface{}(result)
-	for _, k := range keys {
-		m, ok := cur.(map[string]interface{})
-		if !ok {
-			return false
-		}
-		cur = m[k]
+func evalRemoteBool(result map[string]interface{}) bool {
+	if v, ok := result["value"].(bool); ok {
+		return v
 	}
-	v, ok := cur.(bool)
-	return ok && v
+	if nested, ok := result["result"].(map[string]interface{}); ok {
+		if v, ok := nested["value"].(bool); ok {
+			return v
+		}
+	}
+	return false
+}
+
+func (t *AttachTap) waitPing(ctx context.Context, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if t.pingSeen.Load() {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	return fmt.Errorf("timeout waiting for binding ping")
 }
 
 func (t *AttachTap) InboundCount() int64 {
@@ -140,8 +201,13 @@ func (t *AttachTap) handleBindingCalled(params map[string]interface{}) {
 	var msg struct {
 		Dir     int    `json:"dir"`
 		Payload string `json:"payload"`
+		Ping    bool   `json:"ping"`
 	}
 	if err := json.Unmarshal([]byte(payloadStr), &msg); err != nil {
+		return
+	}
+	if msg.Ping {
+		t.pingSeen.Store(true)
 		return
 	}
 	if msg.Payload == "" {
@@ -165,12 +231,7 @@ func (t *AttachTap) handleOutboundRequest(params map[string]interface{}) {
 	if method == "" || url == "" {
 		return
 	}
-	path := url
-	if strings.HasPrefix(url, "http") {
-		if idx := strings.Index(url[8:], "/"); idx >= 0 {
-			path = url[8+idx:]
-		}
-	}
+	path := outboundURLPath(url)
 	payload := fmt.Sprintf("%s %s HTTP/1.1\r\nHost: localhost\r\n\r\n", method, path)
 	t.emit(1, []byte(payload))
 }
@@ -206,6 +267,21 @@ func (t *AttachTap) emit(isWrite uint8, payload []byte) {
 	}
 	copy(evt.Comm[:], []byte(name))
 	t.sink(evt)
+}
+
+func outboundURLPath(url string) string {
+	if !strings.HasPrefix(url, "http://") && !strings.HasPrefix(url, "https://") {
+		return url
+	}
+	schemeEnd := strings.Index(url, "://")
+	if schemeEnd < 0 {
+		return url
+	}
+	rest := url[schemeEnd+3:]
+	if idx := strings.Index(rest, "/"); idx >= 0 {
+		return rest[idx:]
+	}
+	return "/"
 }
 
 func httpStatusText(code int) string {

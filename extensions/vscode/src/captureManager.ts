@@ -3,6 +3,7 @@ import * as cp from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import { preflightBugitBinary } from './binaryCheck';
+import { parseYamlValue, resolveBackendPort } from './portResolver';
 
 export type CaptureState = 'idle' | 'recording' | 'saved';
 
@@ -55,14 +56,7 @@ function publicUrl(workspace: string): string {
     return `http://localhost:${cfgPort}`;
   }
   const captureRoot = findCaptureRoot(workspace);
-  const envPath = path.join(captureRoot, '.env');
-  let port = 4000;
-  if (fs.existsSync(envPath)) {
-    const m = fs.readFileSync(envPath, 'utf8').match(/^PORT=(\d+)/m);
-    if (m) {
-      port = parseInt(m[1], 10);
-    }
-  }
+  const port = resolveBackendPort(workspace, captureRoot);
   return `http://localhost:${port}`;
 }
 
@@ -145,21 +139,60 @@ function killProcessTree(proc: cp.ChildProcess, force: boolean): void {
   }
 }
 
+function shouldSkipCaptureFallback(output: string): boolean {
+  const lower = output.toLowerCase();
+  return (
+    lower.includes('backend listening') ||
+    lower.includes('resolve backend inspector') ||
+    lower.includes('eaddrinuse') ||
+    lower.includes('restart backend') ||
+    lower.includes('inspector on :923') ||
+    lower.includes('configured backend inspector') ||
+    lower.includes('already listening on')
+  );
+}
+
+function parseRestartCommand(output: string): string | undefined {
+  const m = output.match(/restart backend \(([^)]+)\)/i);
+  if (m) {
+    return m[1].trim();
+  }
+  if (output.includes('configured backend inspector on :923')) {
+    return 'npm run dev';
+  }
+  return undefined;
+}
+
 function handleCaptureOutput(text: string): void {
   captureOutput += text;
-  if (text.includes('capturing inbound + outbound HTTP')) {
+  if (text.includes('capturing inbound + outbound HTTP') || text.includes('capturing inbound HTTP')) {
     const m = text.match(/HTTP on :(\d+)/);
     recordingHint = m
       ? `Recording — capturing API traffic on :${m[1]}`
       : 'Recording — capturing inbound + outbound API traffic';
     emitStatus();
+  } else if (text.includes('BugIT inspector target:')) {
+    const m = text.match(/inspector target: .+ on :(\d+)/);
+    recordingHint = m
+      ? `Recording — backend inspector on :${m[1]}`
+      : 'Recording — backend inspector attached';
+    emitStatus();
   } else if (text.includes('attached to backend')) {
     const m = text.match(/backend on :(\d+)/);
     recordingHint = m ? `Recording — attached to :${m[1]}` : 'Recording — attached to running backend';
     emitStatus();
+  } else if (text.includes('configured backend inspector on :')) {
+    const m = text.match(/configured backend inspector on :(\d+)/);
+    recordingHint = m
+      ? `Recording — restart backend for inspector :${m[1]}, then Record again`
+      : 'Recording — restart backend once for BugIT inspector';
+    emitStatus();
+  } else if (text.includes('preload capture active') || text.includes('preload mode')) {
+    recordingHint = 'Recording — preload HTTP ingest (restart backend if no events)';
+    emitStatus();
   } else if (text.includes('no HTTP events captured')) {
     vscode.window.showWarningMessage(
-      'BugIT captured no API traffic — use your app normally and ensure requests hit the backend port, then Stop again'
+      'BugIT captured no API traffic — restart backend if prompted, use your app, then Stop again'
     );
   } else if (text.includes('spawn fallback') || text.includes('BugIT recording at') || text.includes('BugIT capture in')) {
     recordingHint = usingCaptureFallback
@@ -227,17 +260,35 @@ function attachCaptureProcessHandlers(
     const unknownRecord = mode === 'record' && looksLikeUnknownRecordCommand(captureOutput);
 
     if (earlyExit || unknownRecord) {
-      if (mode === 'record' && !usingCaptureFallback) {
+      if (mode === 'record' && !usingCaptureFallback && !shouldSkipCaptureFallback(captureOutput)) {
         captureOutputChannel?.appendLine('WARN: bugit record failed — retrying with capture --auto');
         usingCaptureFallback = true;
         recordingHint = '';
         spawnCaptureProcess(bugitBin, workspace, 'capture-auto');
         return;
       }
-      handleCaptureFailure(
-        'BugIT recording exited immediately. Run BugIT: Doctor to check your CLI binary.',
-        workspace,
-      );
+      const restartCmd = parseRestartCommand(captureOutput);
+      let message = 'BugIT recording exited immediately. Run BugIT: Doctor to check your CLI binary.';
+      if (shouldSkipCaptureFallback(captureOutput)) {
+        message =
+          'Backend inspector blocked by Next.js on :9229. BugIT configured :9230 — restart backend, then Record again.';
+      }
+      if (restartCmd) {
+        vscode.window
+          .showErrorMessage(message, 'Copy restart command')
+          .then((choice) => {
+            if (choice === 'Copy restart command') {
+              void vscode.env.clipboard.writeText(restartCmd);
+            }
+          });
+      } else {
+        handleCaptureFailure(message, workspace);
+      }
+      if (restartCmd) {
+        resetCaptureSession();
+        captureState = 'idle';
+        emitStatus();
+      }
       return;
     }
 
@@ -371,28 +422,33 @@ export function latestSnapshotPath(workspace: string): string {
 async function writeWorkspaceDefaults(workspace: string): Promise<void> {
   const captureRoot = findCaptureRoot(workspace);
   const relRoot = path.relative(workspace, captureRoot).replace(/\\/g, '/') || '.';
-  const portMatch = fs.existsSync(path.join(captureRoot, '.env'))
-    ? fs.readFileSync(path.join(captureRoot, '.env'), 'utf8').match(/^PORT=(\d+)/m)
-    : null;
-  const port = portMatch ? parseInt(portMatch[1], 10) : 4000;
+  const port = resolveBackendPort(workspace, captureRoot);
 
   const bugitDir = path.join(captureRoot, '.bugit');
   if (!fs.existsSync(bugitDir)) {
     fs.mkdirSync(bugitDir, { recursive: true });
   }
   const yamlPath = path.join(bugitDir, 'bugit.yaml');
-  const yaml = [
-    'collector_http: http://127.0.0.1:28080',
-    'collector_grpc: 127.0.0.1:29090',
+  const existing = fs.existsSync(yamlPath) ? fs.readFileSync(yamlPath, 'utf8') : '';
+  const inspectPort = parseYamlValue(existing, 'inspect_port');
+  const snapshotKey = parseYamlValue(existing, 'snapshot_key') ?? 'dev-insecure-key-change-me';
+  const devCommand = parseYamlValue(existing, 'dev_command') ?? 'npm run dev';
+  const collectorHTTP = parseYamlValue(existing, 'collector_http') ?? 'http://127.0.0.1:28080';
+  const collectorGRPC = parseYamlValue(existing, 'collector_grpc') ?? '127.0.0.1:29090';
+
+  const lines = [
+    `collector_http: ${collectorHTTP}`,
+    `collector_grpc: ${collectorGRPC}`,
     `record_proxy: 127.0.0.1:${port}`,
     `app_port: ${port}`,
-    'snapshot_key: dev-insecure-key-change-me',
-    'inspect_port: 9229',
+    `snapshot_key: ${snapshotKey}`,
     `capture_root: ${captureRoot.replace(/\\/g, '/')}`,
-    'dev_command: npm run dev',
-    '',
-  ].join('\n');
-  fs.writeFileSync(yamlPath, yaml);
+    `dev_command: ${devCommand}`,
+  ];
+  if (inspectPort) {
+    lines.push(`inspect_port: ${inspectPort}`);
+  }
+  fs.writeFileSync(yamlPath, lines.join('\n') + '\n');
 
   const vsDir = path.join(workspace, '.vscode');
   const settingsPath = path.join(vsDir, 'settings.json');
